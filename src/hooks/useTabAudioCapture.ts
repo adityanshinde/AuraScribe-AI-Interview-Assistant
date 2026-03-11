@@ -72,7 +72,11 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
                 const text = data.text?.trim();
                 
                 if (text && text.length > 2) {
-                  setTranscript(prev => prev + (prev ? ' ' : '') + text);
+                  setTranscript(prev => {
+                    const newTranscript = prev + (prev ? ' ' : '') + text;
+                    // Keep only last 2000 characters for UI performance
+                    return newTranscript.length > 2000 ? newTranscript.slice(-2000) : newTranscript;
+                  });
                   onTranscriptUpdate(text);
                 }
               } catch (error) {

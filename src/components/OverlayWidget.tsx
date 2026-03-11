@@ -210,6 +210,13 @@ export default function OverlayWidget() {
               <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
                 <h2 className="text-sm font-bold text-white tracking-wide">Session History</h2>
                 <div className="flex gap-3">
+                  <button 
+                    onClick={() => setHistory([])} 
+                    className="text-[10px] font-bold text-red-400/70 hover:text-red-400 uppercase tracking-wider mr-2"
+                    title="Clear All History"
+                  >
+                    Clear All
+                  </button>
                   <button onClick={exportHistory} className="text-slate-400 hover:text-white"><Download size={14} /></button>
                   <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-white"><X size={14} /></button>
                 </div>

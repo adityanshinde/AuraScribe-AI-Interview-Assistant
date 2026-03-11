@@ -33,6 +33,11 @@ export function Visualizer({ stream, isListening }: VisualizerProps) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const gradient = ctx.createLinearGradient(0, canvas.height, 0, 0);
+    gradient.addColorStop(0, 'rgba(34, 211, 238, 0.2)');
+    gradient.addColorStop(1, 'rgba(34, 211, 238, 0.8)');
+    ctx.fillStyle = gradient;
+
     const draw = () => {
       animationRef.current = requestAnimationFrame(draw);
       analyser.getByteFrequencyData(dataArray);
@@ -45,14 +50,7 @@ export function Visualizer({ stream, isListening }: VisualizerProps) {
 
       for (let i = 0; i < bufferLength; i++) {
         barHeight = dataArray[i] / 2;
-
-        const gradient = ctx.createLinearGradient(0, canvas.height, 0, 0);
-        gradient.addColorStop(0, 'rgba(34, 211, 238, 0.2)');
-        gradient.addColorStop(1, 'rgba(34, 211, 238, 0.8)');
-
-        ctx.fillStyle = gradient;
         ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-
         x += barWidth + 1;
       }
     };

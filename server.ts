@@ -82,6 +82,35 @@ async function startServer() {
 
       const cleanText = text.trim().toLowerCase().replace(/[.,!?;:]/g, "");
       
+      // Technical term corrections (Whisper often mishears these)
+      const corrections: Record<string, string> = {
+        "virtual dome": "virtual DOM",
+        "react.js": "React",
+        "view.js": "Vue.js",
+        "node.js": "Node.js",
+        "next.js": "Next.js",
+        "typescript": "TypeScript",
+        "javascript": "JavaScript",
+        "tailwind": "Tailwind CSS",
+        "postgress": "PostgreSQL",
+        "mongo db": "MongoDB",
+        "graphql": "GraphQL",
+        "rest api": "REST API",
+        "dockerize": "Dockerize",
+        "kubernetes": "Kubernetes",
+        "aws": "AWS",
+        "azure": "Azure",
+        "gcp": "GCP",
+        "eaml": "YAML", // User mentioned EAML, likely meant YAML or an Enterprise AML
+      };
+
+      let correctedText = text;
+      Object.entries(corrections).forEach(([wrong, right]) => {
+        const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
+        correctedText = correctedText.replace(regex, right);
+      });
+      text = correctedText;
+
       // If the text is just one of the hallucinations and very short, discard it
       // But don't discard if it's part of a longer sentence
       const isHallucination = hallucinations.some(h => cleanText === h && text.length < 20);
@@ -115,6 +144,17 @@ async function startServer() {
 
       let systemPrompt = `You are an expert AI assistant acting as a ${persona}.
 Analyze the transcript for questions. If a question is found, provide a high-quality answer.
+
+CONTEXT:
+- User Resume: ${resume || 'Not provided'}
+- Job Description: ${jd || 'Not provided'}
+
+INSTRUCTIONS:
+1. Detect if the transcript contains a question.
+2. If yes, provide a concise but clear answer.
+3. Use the Resume and JD context to personalize the answer where relevant.
+4. If the question is technical, be precise.
+
 Output JSON structure:
 {
   "isQuestion": boolean,
