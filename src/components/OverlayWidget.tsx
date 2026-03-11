@@ -46,6 +46,27 @@ export default function OverlayWidget() {
   const { detectedQuestion, answer, isProcessing, processTranscript, resetAssistant } = useAIAssistant();
   const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript);
 
+  // Save to history when a new answer is complete
+  useEffect(() => {
+    if (detectedQuestion && answer) {
+      const newItem: HistoryItem = {
+        id: Math.random().toString(36).substr(2, 9),
+        question: detectedQuestion.question,
+        answer: answer.bullets,
+        timestamp: Date.now()
+      };
+      
+      setHistory(prev => {
+        // Avoid duplicate entries for the same question
+        if (prev.length > 0 && prev[0].question === newItem.question) return prev;
+        return [newItem, ...prev].slice(0, 50); // Keep last 50 items
+      });
+      
+      // Clear transcript after detection
+      clearTranscript();
+    }
+  }, [detectedQuestion, answer, clearTranscript]);
+
   useEffect(() => {
     const savedKey = localStorage.getItem('groq_api_key');
     const savedVoiceModel = localStorage.getItem('groq_voice_model');
@@ -114,6 +135,7 @@ export default function OverlayWidget() {
   const handleClear = () => {
     clearTranscript();
     resetAssistant();
+    setHistory([]);
   };
 
   const toggleListen = () => {
@@ -516,27 +538,45 @@ export default function OverlayWidget() {
                       )}
                     </div>
                     
-                    {detectedQuestion ? (
+                    {history.length > 0 ? (
+                      <div className="flex flex-col gap-6">
+                        {history.map((item, index) => (
+                          <div key={item.id} className={cn(
+                            "flex flex-col gap-3 transition-all duration-500",
+                            index === 0 ? "opacity-100 scale-100" : "opacity-60 scale-[0.98] hover:opacity-100"
+                          )}>
+                            <div className="text-sm font-medium text-white leading-snug border-l-2 border-cyan-500 pl-3">
+                              "{item.question}"
+                            </div>
+                            
+                            <div className="flex flex-col gap-2.5">
+                              {item.answer.map((bullet, i) => (
+                                <div key={i} className="flex items-start gap-3 bg-white/[0.03] border border-white/[0.05] rounded-xl p-3 hover:bg-white/[0.05] transition-colors">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-1.5 shrink-0 shadow-[0_0_8px_rgba(34,211,238,0.6)]" />
+                                  <span className="text-sm text-slate-200 leading-relaxed">{bullet}</span>
+                                </div>
+                              ))}
+                            </div>
+                            
+                            <div className="text-[9px] text-slate-600 font-mono mt-1 flex justify-end">
+                              {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </div>
+                            
+                            {index < history.length - 1 && (
+                              <div className="h-px bg-white/5 mt-2 w-full" />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : detectedQuestion ? (
                       <div className="flex flex-col gap-4">
                         <div className="text-sm font-medium text-white leading-snug border-l-2 border-cyan-500 pl-3">
                           "{detectedQuestion.question}"
                         </div>
-                        
-                        {answer ? (
-                          <div className="flex flex-col gap-2.5">
-                            {answer.bullets.map((bullet, i) => (
-                              <div key={i} className="flex items-start gap-3 bg-white/[0.03] border border-white/[0.05] rounded-xl p-3 hover:bg-white/[0.05] transition-colors">
-                                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-1.5 shrink-0 shadow-[0_0_8px_rgba(34,211,238,0.6)]" />
-                                <span className="text-sm text-slate-200 leading-relaxed">{bullet}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-3 text-xs text-cyan-400/70 mt-2">
-                            <div className="h-3.5 w-3.5 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin"></div>
-                            Generating optimal response...
-                          </div>
-                        )}
+                        <div className="flex items-center gap-3 text-xs text-cyan-400/70 mt-2">
+                          <div className="h-3.5 w-3.5 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin"></div>
+                          Generating optimal response...
+                        </div>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3 opacity-50">

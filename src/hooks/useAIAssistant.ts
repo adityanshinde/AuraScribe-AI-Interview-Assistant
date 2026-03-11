@@ -13,10 +13,11 @@ export interface QuestionDetection {
   type: string;
 }
 
-export function useAIAssistant() {
+export function useAIAssistant(onQuestionDetected?: () => void) {
   const [detectedQuestion, setDetectedQuestion] = useState<QuestionDetection | null>(null);
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   
   const transcriptBufferRef = useRef<string>('');
   const lastQuestionTimeRef = useRef<number>(0);
@@ -25,8 +26,21 @@ export function useAIAssistant() {
 
   useEffect(() => {
     audioRef.current = new Audio();
+    
+    const handleStart = () => setIsSpeaking(true);
+    const handleEnd = () => setIsSpeaking(false);
+    
+    if (audioRef.current) {
+      audioRef.current.addEventListener('play', handleStart);
+      audioRef.current.addEventListener('ended', handleEnd);
+      audioRef.current.addEventListener('pause', handleEnd);
+    }
+
     return () => {
       if (audioRef.current) {
+        audioRef.current.removeEventListener('play', handleStart);
+        audioRef.current.removeEventListener('ended', handleEnd);
+        audioRef.current.removeEventListener('pause', handleEnd);
         audioRef.current.pause();
         audioRef.current = null;
       }
@@ -76,10 +90,14 @@ export function useAIAssistant() {
       }
     } catch (error) {
       console.error('TTS Error:', error);
+      setIsSpeaking(false);
     }
   }, []);
 
   const processTranscript = useCallback(async (newText: string) => {
+    // If AI is speaking, ignore the transcript to avoid feedback loops
+    if (isSpeaking) return;
+
     // Append to buffer
     transcriptBufferRef.current += ' ' + newText;
     
@@ -140,6 +158,11 @@ export function useAIAssistant() {
             playSpeech(data.spoken);
           }
 
+          // Call the callback to clear the UI transcript
+          if (onQuestionDetected) {
+            onQuestionDetected();
+          }
+
           // Clear buffer after a successful detection to prevent re-detecting the same question
           // We keep a tiny bit of context just in case
           transcriptBufferRef.current = transcriptBufferRef.current.slice(-20);
@@ -150,7 +173,7 @@ export function useAIAssistant() {
         setIsProcessing(false);
       }
     }
-  }, [isProcessing, playSpeech]);
+  }, [isProcessing, isSpeaking, playSpeech, onQuestionDetected]);
 
   const resetAssistant = useCallback(() => {
     setDetectedQuestion(null);

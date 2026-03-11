@@ -6,6 +6,14 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
   const [transcript, setTranscript] = useState('');
   const streamRef = useRef<MediaStream | null>(null);
   const isRecordingRef = useRef(false);
+  const autoClearTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const clearTranscript = useCallback(() => {
+    setTranscript('');
+    if (autoClearTimerRef.current) {
+      clearTimeout(autoClearTimerRef.current);
+    }
+  }, []);
 
   const startListening = useCallback(async () => {
     try {
@@ -26,7 +34,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
       streamRef.current = stream;
       isRecordingRef.current = true;
       setIsListening(true);
-      setTranscript(''); // Clear previous transcript
+      clearTranscript(); // Use the clear function to handle timers
 
       const recordNextChunk = () => {
         if (!isRecordingRef.current || !streamRef.current) return;
@@ -89,6 +97,14 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
                     return newTranscript.length > 2000 ? newTranscript.slice(-2000) : newTranscript;
                   });
                   onTranscriptUpdate(text);
+
+                  // Reset auto-clear timer on new text
+                  if (autoClearTimerRef.current) {
+                    clearTimeout(autoClearTimerRef.current);
+                  }
+                  autoClearTimerRef.current = setTimeout(() => {
+                    setTranscript('');
+                  }, 15000); // Clear after 15 seconds of silence
                 }
               } catch (error) {
                 console.error('STT Error:', error);
@@ -133,10 +149,6 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
     }
-  }, []);
-
-  const clearTranscript = useCallback(() => {
-    setTranscript('');
   }, []);
 
   return { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream: streamRef.current };

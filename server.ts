@@ -77,7 +77,29 @@ async function startServer() {
         "amara.org",
         "english subtitles",
         "re-edited by",
-        "translated by"
+        "translated by",
+        "you guys",
+        "peace",
+        "see you in the next one",
+        "god bless",
+        "thank you for your time",
+        "i'll see you next time",
+        "don't forget to like",
+        "hit the bell icon",
+        "thanks for the support",
+        "i'll see you in the next video",
+        "thanks for joining",
+        "have a great day",
+        "see you soon",
+        "take care",
+        "stay tuned",
+        "welcome back",
+        "let's get started",
+        "in this video",
+        "today we are going to",
+        "if you enjoyed this",
+        "leave a comment",
+        "share this video"
       ];
 
       const cleanText = text.trim().toLowerCase().replace(/[.,!?;:]/g, "");
@@ -153,7 +175,7 @@ async function startServer() {
       }
 
       let systemPrompt = `You are an expert AI assistant acting as a ${persona}.
-Analyze the transcript for questions. If a question is found, provide a high-quality answer.
+Analyze the transcript for questions. If a question is found, provide a high-quality answer optimized for an interview setting.
 
 CONTEXT:
 - User Resume: ${resume || 'Not provided'}
@@ -161,9 +183,14 @@ CONTEXT:
 
 INSTRUCTIONS:
 1. Detect if the transcript contains a question.
-2. If yes, provide a concise but clear answer.
-3. Use the Resume and JD context to personalize the answer where relevant.
-4. If the question is technical, be precise.
+2. If yes, provide a "Short but Detailed" answer.
+3. FORMATTING:
+   - Use 3-4 "Glanceable" bullet points.
+   - Each bullet should be a "Talking Point" (max 10-12 words).
+   - For behavioral questions, use the STAR method (Situation, Task, Action, Result) in the bullets.
+   - For technical questions, include specific keywords, Big O, or snippets.
+4. Use the Resume and JD context to personalize the answer.
+5. "spoken" field should be a punchy 1-2 sentence "Elevator Pitch" response.
 
 Output JSON structure:
 {
@@ -171,8 +198,8 @@ Output JSON structure:
   "question": "the detected question",
   "confidence": 0.0-1.0,
   "type": "behavioral/technical",
-  "bullets": ["key point 1", "key point 2"],
-  "spoken": "concise 2-3 sentence verbal response"
+  "bullets": ["Bullet 1: Action-oriented", "Bullet 2: Technical detail", "Bullet 3: Result/Impact"],
+  "spoken": "punchy 1-2 sentence response"
 }
 Only output valid JSON.`;
 
@@ -184,7 +211,7 @@ Only output valid JSON.`;
       }
 
       if (persona === 'Technical Interviewer') {
-        systemPrompt += `\n\nFocus on code snippets, Big O complexity, and edge cases. If a resume is provided, tailor the answer to the user's specific experience.`;
+        systemPrompt += `\n\nFocus on glanceable technical talking points, Big O complexity, and edge cases. Keep bullets extremely punchy so the user can expand on them naturally.`;
       } else if (persona === 'Executive Assistant') {
         systemPrompt += `\n\nFocus on summarizing action items, key decisions, and high-level strategy.`;
       } else if (persona === 'Language Translator') {
