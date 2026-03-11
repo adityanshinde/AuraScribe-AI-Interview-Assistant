@@ -1,5 +1,5 @@
 {
-  "name": "Parakeet AI Copilot",
-  "description": "A real-time AI interview assistant that transcribes audio, detects questions, and generates answers in a floating overlay.",
+  "name": "AuraScribe AI Copilot",
+  "description": "A premium real-time AI assistant that transcribes audio, detects questions, and generates answers in a floating overlay.",
   "requestFramePermissions": ["microphone", "camera", "geolocation", "display-capture"]
 }

@@ -6,8 +6,8 @@ if (process.platform === 'darwin') {
   app.dock.hide();
 }
 
-// 2. Disguise in Task Manager
-app.name = 'Windows Defender Helper';
+// 2. Disguise in Task Manager (or set real name)
+app.name = 'AuraScribe';
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -57,6 +57,32 @@ function createWindow() {
 
   // Load the local server
   win.loadURL('http://localhost:3000');
+
+  // Handle Always on Top toggle from UI
+  const { ipcMain } = require('electron');
+  ipcMain.on('set-always-on-top', (event, flag) => {
+    win.setAlwaysOnTop(flag, 'screen-saver');
+  });
+
+  // Handle hotkey updates
+  ipcMain.on('update-hotkeys', (event, hotkeys) => {
+    globalShortcut.unregisterAll();
+    
+    // Re-register with new keys
+    globalShortcut.register(hotkeys.toggleClickThrough, () => {
+      isClickThrough = !isClickThrough;
+      win.setIgnoreMouseEvents(isClickThrough, { forward: true });
+    });
+
+    globalShortcut.register(hotkeys.toggleHide, () => {
+      if (win.isVisible()) {
+        win.hide();
+      } else {
+        win.show();
+        win.setAlwaysOnTop(true, 'screen-saver');
+      }
+    });
+  });
 
   // ==========================================================
   // GLOBAL KEYBOARD SHORTCUTS

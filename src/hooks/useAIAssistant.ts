@@ -30,22 +30,30 @@ export function useAIAssistant() {
     }
 
     const now = Date.now();
-    if (now - lastQuestionTimeRef.current > 10000) { // 10 seconds debounce to avoid rate limits
+    if (now - lastQuestionTimeRef.current > 4000) { // 4 seconds debounce to match chunking
       lastQuestionTimeRef.current = now; // Update immediately to prevent concurrent calls
       try {
         setIsProcessing(true);
         
         const apiKey = localStorage.getItem('groq_api_key') || '';
         const model = localStorage.getItem('groq_model') || 'llama-3.3-70b-versatile';
+        const persona = localStorage.getItem('groq_persona') || 'Technical Interviewer';
+        const resume = localStorage.getItem('groq_resume') || '';
+        const jd = localStorage.getItem('groq_jd') || '';
 
         const response = await fetch('/api/analyze', {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
             'x-api-key': apiKey,
-            'x-model': model
+            'x-model': model,
+            'x-persona': persona
           },
-          body: JSON.stringify({ transcript: transcriptBufferRef.current })
+          body: JSON.stringify({ 
+            transcript: transcriptBufferRef.current,
+            resume,
+            jd
+          })
         });
 
         if (!response.ok) {
@@ -77,5 +85,11 @@ export function useAIAssistant() {
     }
   }, []);
 
-  return { detectedQuestion, answer, isProcessing, processTranscript };
+  const resetAssistant = useCallback(() => {
+    setDetectedQuestion(null);
+    setAnswer(null);
+    transcriptBufferRef.current = '';
+  }, []);
+
+  return { detectedQuestion, answer, isProcessing, processTranscript, resetAssistant };
 }

@@ -1,103 +1,110 @@
-# Parakeet AI Copilot
+# AuraScribe AI Copilot 🚀
 
-Parakeet AI Copilot is an intelligent, real-time interview and meeting assistant. It listens to your system audio or browser tabs, transcribes the conversation live using Whisper, detects questions, and uses LLMs (like Llama 3) to generate perfect, bulleted hints and verbal responses instantly.
-
-## 🌟 Features
-
-- **Real-Time Transcription**: Uses Groq's ultra-fast Whisper API to transcribe audio with near-zero latency.
-- **Smart Question Detection**: Automatically identifies when you are being asked a question.
-- **Instant Answers**: Generates bulleted hints and a suggested spoken response.
-- **Customizable AI**: Bring your own Groq API key and choose your preferred model (Llama 3, Mixtral, Gemma).
-- **Cross-Platform**: Works as a Web App, a native Windows/macOS Desktop App, and on Mobile devices.
+AuraScribe is an advanced, real-time AI assistant designed for interviews, meetings, and live translations. It captures audio from your system or browser, transcribes it instantly using ultra-fast models, and provides intelligent, context-aware insights.
 
 ---
 
-## 🚀 How to Use (By Platform)
+## ✨ Key Features
 
-### 1. Windows / macOS Desktop App (Recommended for Interviews)
+### 🎙️ Real-Time Intelligence
+- **Ultra-Fast Transcription**: Powered by Groq's Whisper Large V3 Turbo for near-zero latency speech-to-text.
+- **Smart Question Detection**: Automatically identifies when you're being asked a question and triggers the AI Copilot.
+- **Instant Copilot Answers**: Provides concise bullet points and a suggested verbal response within seconds.
 
-The desktop app is the most powerful way to use Parakeet AI. It runs as a floating, transparent widget that is **invisible to screen sharing** (like Zoom, Teams, or Google Meet).
+### 🎭 Meeting Personas
+Tailor the AI's "personality" and focus based on your meeting type:
+- **Technical Interviewer**: Focuses on code snippets, Big O complexity, and deep technical edge cases.
+- **Executive Assistant**: Summarizes action items, key decisions, and high-level strategy.
+- **Language Translator**: Accurately translates dialogue while maintaining the original tone and context.
 
-**Setup:**
-1. Make sure you have [Node.js](https://nodejs.org/) installed.
-2. Download and extract the project ZIP.
-3. Open a terminal in the project folder and run:
-   ```bash
-   npm install
-   ```
-4. Start the desktop app:
-   ```bash
-   npm run electron:dev
-   ```
+### 🧠 Personalized Grounding
+- **Resume-Based Training**: Paste your resume in settings to receive answers tailored to your specific experience and background.
+- **JD Contextualization**: Paste the Job Description (JD) to ensure the AI aligns its suggestions with the role's requirements.
 
-**Usage:**
-1. Click the **Settings (Gear)** icon in the top right.
-2. Enter your **Groq API Key** (get one free at [console.groq.com](https://console.groq.com)).
-3. Select your preferred AI Model and click **Save Settings**.
-4. Click **Start Session**. The app will automatically capture your system audio (no popup required!).
-5. **Pro Tip:** You can drag the window by the top header and resize it from the edges.
-6. **Ghost Mode:** Press `Ctrl + Shift + X` (or `Cmd + Shift + X` on Mac) to make the window unclickable so it doesn't interfere with your coding or typing. Press it again to make it clickable.
+### 🕵️ Stealth & Productivity
+- **Stealth Mode (Opacity)**: Adjust the widget's transparency (10% to 100%) to keep it subtle on your screen.
+- **Mini Mode**: A compact view that takes up minimal screen real estate while still showing the most critical insights.
+- **Always on Top**: Keep the widget visible over all other windows (Zoom, Teams, IDEs).
+- **Click-Through Mode**: Make the window unclickable so it doesn't interfere with your typing or coding.
 
-### 2. Web Browser (Chrome, Edge, Firefox)
-
-You can use Parakeet AI directly in your browser without installing anything. This is perfect for browser-based meetings (like Google Meet).
-
-**Setup:**
-1. Run the development server:
-   ```bash
-   npm run dev
-   ```
-2. Open `http://localhost:3000` in your browser.
-
-**Usage:**
-1. Click the **Settings (Gear)** icon and enter your Groq API Key.
-2. Click **Start Session**.
-3. Your browser will ask you what you want to share.
-4. Select the **Chrome Tab** where your meeting is happening.
-5. ⚠️ **CRITICAL:** You MUST check the **"Also share tab audio"** switch at the bottom of the dialog before clicking Share!
-6. The AI will now listen to that tab and provide live answers.
-
-### 3. Mobile App (iOS / Android)
-
-Since this is a web-based PWA (Progressive Web App) architecture, you can use it on your phone!
-
-**Setup:**
-1. Host the application on a public server (e.g., Vercel, Render, or Cloud Run).
-2. Open the URL on your mobile browser (Safari on iOS, Chrome on Android).
-
-**Usage:**
-1. Tap the **Settings** icon to add your API Key.
-2. Tap **Start Session**.
-3. On mobile, the browser will request Microphone permissions. Allow it.
-4. Place your phone near your computer speakers during an interview. The phone's microphone will pick up the interviewer's voice and generate answers on your phone screen!
+### 📊 Session Management
+- **Live Visualizer**: Real-time waveform feedback to confirm audio capture is active.
+- **Session History**: Review all questions and answers from your current session.
+- **History Export**: Download your entire session log as a `.txt` file for post-meeting review.
 
 ---
 
-## ⚙️ Configuration & Settings
+## 🚀 Getting Started
 
-You can configure the app by clicking the **Settings (Gear)** icon in the top right of the widget.
+### 1. Prerequisites
+- [Node.js](https://nodejs.org/) (v18 or higher recommended)
+- A **Groq API Key** (Get it free at [console.groq.com](https://console.groq.com))
 
-- **Groq API Key**: Required to run the AI models. You can get a free key from [Groq Console](https://console.groq.com/keys).
-- **Voice Model (Transcription)**: Choose the model that listens and converts speech to text.
-  - `Whisper Large V3 Turbo`: Fastest, highly recommended for real-time interviews.
-  - `Whisper Large V3`: Slightly slower, but the most accurate.
-  - `Distil Whisper`: Great for English-only conversations.
-- **Text Model (AI Copilot)**: Choose the brain behind your copilot that generates answers.
-  - `Llama 3.3 70B (Recommended)`: Best overall reasoning and speed.
-  - `Mixtral 8x7B`: Great alternative for fast, concise answers.
-  - `Gemma 2 9B`: Lightweight and highly accurate for technical questions.
+### 2. Installation
+```bash
+# Clone the repository
+git clone https://github.com/your-repo/aurascribe.git
 
-These settings are saved locally on your device (`localStorage`) and are never sent to any external servers other than Groq.
+# Navigate to the project
+cd aurascribe
+
+# Install dependencies
+npm install
+```
+
+### 3. Running the App
+
+#### **Web Version (Browser)**
+Perfect for Google Meet or browser-based calls.
+```bash
+npm run dev
+```
+1. Open `http://localhost:3000`.
+2. Click **Start Session** and select the tab you want to capture.
+3. **Important**: Ensure "Also share tab audio" is checked in the browser dialog.
+
+#### **Desktop Version (Electron)**
+The most powerful mode for system-wide capture (Zoom, Teams, Slack).
+```bash
+npm run electron:dev
+```
+
+---
+
+## ⌨️ Global Hotkeys
+
+AuraScribe supports system-wide hotkeys (customizable in Settings):
+- **Hide/Show Widget**: `Ctrl + Shift + H` (Default)
+- **Toggle Click-Through**: `Ctrl + Shift + X` (Default)
+
+---
+
+## ⚙️ Configuration
+
+Click the **Gear Icon** in the widget to configure:
+- **Groq API Key**: Your personal key for AI processing.
+- **Intelligence Model**: Choose between Llama 3.3 70B (Recommended), Llama 3.1 8B (Fast), or DeepSeek R1.
+- **Meeting Persona**: Select the focus of the AI.
+- **Resume & JD**: Paste your details for personalized grounding.
+- **Stealth Mode**: Adjust the slider for transparency.
 
 ---
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: React 18, Tailwind CSS, Lucide Icons
+- **Frontend**: React 18, Tailwind CSS, Lucide Icons, Framer Motion
 - **Backend**: Node.js, Express
-- **Desktop Wrapper**: Electron
-- **AI / LLM**: Groq SDK (Whisper for STT, Llama 3 for LLM)
-- **Audio Capture**: WebRTC (`getDisplayMedia` / `getUserMedia`)
+- **Desktop**: Electron
+- **AI Engine**: Groq SDK (Whisper for STT, Llama/DeepSeek for LLM)
+- **Audio**: Web Audio API & WebRTC
+
+---
+
+## 🛡️ Privacy & Security
+- **Local Storage**: Your API keys and settings are stored locally on your device.
+- **No Data Persistence**: AuraScribe does not store your audio or transcripts on any server. Data is processed in real-time and cleared when the session ends (unless you export history).
+
+---
 
 ## 📝 License
-MIT License. Free to use and modify.
+MIT License. Created with ❤️ for the developer community.

@@ -49,7 +49,41 @@ async function startServer() {
         response_format: "json",
       });
 
-      res.json({ text: transcription.text });
+      let text = transcription.text || "";
+      
+      // Filter out common Whisper hallucinations on silence or background noise
+      const hallucinations = [
+        "thank you",
+        "thanks for watching",
+        "thank you for watching",
+        "please subscribe",
+        "subscribed",
+        "www.openai.com",
+        "you",
+        "bye",
+        "goodbye",
+        "oh",
+        "uh",
+        "um",
+        "i'm sorry",
+        "i don't know",
+        "the end",
+        "watching",
+        "be sure to like and subscribe",
+        "thanks for listening",
+        "thank you so much"
+      ];
+
+      const cleanText = text.trim().toLowerCase().replace(/[.,!?;:]/g, "");
+      
+      // If the text is just one of the hallucinations and short, discard it
+      const isHallucination = hallucinations.some(h => cleanText === h || cleanText.includes(h) && text.length < 30);
+      
+      if (isHallucination || text.length < 2) {
+        text = "";
+      }
+
+      res.json({ text });
     } catch (error: any) {
       console.error("Transcription error:", error);
       res.status(500).json({ error: error.message || "Transcription failed" });
@@ -64,18 +98,15 @@ async function startServer() {
     try {
       const customKey = req.headers['x-api-key'] as string;
       const customModel = req.headers['x-model'] as string;
+      const persona = req.headers['x-persona'] as string || 'Technical Interviewer';
       const groq = getGroq(customKey);
       
-      const { transcript } = req.body;
+      const { transcript, resume, jd } = req.body;
       if (!transcript) {
         return res.status(400).json({ error: "No transcript provided" });
       }
 
-      const completion = await groq.chat.completions.create({
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert AI interview assistant. Analyze the transcript and output JSON.
+      let systemPrompt = `You are an expert AI assistant acting as a ${persona}. Analyze the transcript and output JSON.
 The JSON must have this exact structure:
 {
   "isQuestion": boolean,
@@ -85,7 +116,28 @@ The JSON must have this exact structure:
   "bullets": ["hint 1", "hint 2"],
   "spoken": "2-3 sentence verbal answer"
 }
-Only output valid JSON.`
+Only output valid JSON.`;
+
+      if (resume) {
+        systemPrompt += `\n\nUSER RESUME CONTEXT:\n${resume}`;
+      }
+      if (jd) {
+        systemPrompt += `\n\nJOB DESCRIPTION CONTEXT:\n${jd}`;
+      }
+
+      if (persona === 'Technical Interviewer') {
+        systemPrompt += `\n\nFocus on code snippets, Big O complexity, and edge cases. If a resume is provided, tailor the answer to the user's specific experience.`;
+      } else if (persona === 'Executive Assistant') {
+        systemPrompt += `\n\nFocus on summarizing action items, key decisions, and high-level strategy.`;
+      } else if (persona === 'Language Translator') {
+        systemPrompt += `\n\nFocus on translating the dialogue accurately while maintaining tone.`;
+      }
+
+      const completion = await groq.chat.completions.create({
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt
           },
           {
             role: "user",
