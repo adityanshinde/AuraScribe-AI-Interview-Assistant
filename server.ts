@@ -123,7 +123,9 @@ async function startServer() {
         "aws": "AWS",
         "azure": "Azure",
         "gcp": "GCP",
-        "eaml": "YAML", // User mentioned EAML, likely meant YAML or an Enterprise AML
+        "eaml": "YAML",
+        "travel inheritance": "types of inheritance",
+        "travel inheritances": "types of inheritance",
       };
 
       let correctedText = text;

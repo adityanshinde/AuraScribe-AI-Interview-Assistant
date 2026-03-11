@@ -46,9 +46,17 @@ export default function OverlayWidget() {
   const { detectedQuestion, answer, isProcessing, processTranscript, resetAssistant } = useAIAssistant();
   const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript);
 
+  // Track the last question we added to history to prevent duplicates
+  const lastProcessedQuestionRef = React.useRef<string | null>(null);
+
   // Save to history when a new answer is complete
   useEffect(() => {
     if (detectedQuestion && answer) {
+      // Create a unique key for this specific question-answer pair
+      const questionKey = `${detectedQuestion.question}_${answer.bullets.join('|')}`;
+      
+      if (lastProcessedQuestionRef.current === questionKey) return;
+      
       const newItem: HistoryItem = {
         id: Math.random().toString(36).substr(2, 9),
         question: detectedQuestion.question,
@@ -57,10 +65,14 @@ export default function OverlayWidget() {
       };
       
       setHistory(prev => {
-        // Avoid duplicate entries for the same question
-        if (prev.length > 0 && prev[0].question === newItem.question) return prev;
-        return [newItem, ...prev].slice(0, 50); // Keep last 50 items
+        // Double check for duplicates in the list
+        if (prev.length > 0 && prev[0].question === newItem.question && JSON.stringify(prev[0].answer) === JSON.stringify(newItem.answer)) {
+          return prev;
+        }
+        return [newItem, ...prev].slice(0, 50);
       });
+      
+      lastProcessedQuestionRef.current = questionKey;
       
       // Clear transcript after detection
       clearTranscript();
@@ -538,50 +550,72 @@ export default function OverlayWidget() {
                       )}
                     </div>
                     
-                    {history.length > 0 ? (
-                      <div className="flex flex-col gap-6">
-                        {history.map((item, index) => (
-                          <div key={item.id} className={cn(
-                            "flex flex-col gap-3 transition-all duration-500",
-                            index === 0 ? "opacity-100 scale-100" : "opacity-60 scale-[0.98] hover:opacity-100"
-                          )}>
-                            <div className="text-sm font-medium text-white leading-snug border-l-2 border-cyan-500 pl-3">
-                              "{item.question}"
-                            </div>
-                            
-                            <div className="flex flex-col gap-2.5">
-                              {item.answer.map((bullet, i) => (
-                                <div key={i} className="flex items-start gap-3 bg-white/[0.03] border border-white/[0.05] rounded-xl p-3 hover:bg-white/[0.05] transition-colors">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 mt-1.5 shrink-0 shadow-[0_0_8px_rgba(34,211,238,0.6)]" />
-                                  <span className="text-sm text-slate-200 leading-relaxed">{bullet}</span>
-                                </div>
-                              ))}
-                            </div>
-                            
-                            <div className="text-[9px] text-slate-600 font-mono mt-1 flex justify-end">
-                              {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                            </div>
-                            
-                            {index < history.length - 1 && (
-                              <div className="h-px bg-white/5 mt-2 w-full" />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    ) : detectedQuestion ? (
-                      <div className="flex flex-col gap-4">
-                        <div className="text-sm font-medium text-white leading-snug border-l-2 border-cyan-500 pl-3">
-                          "{detectedQuestion.question}"
+                    {isProcessing && !answer && (
+                      <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <div className="text-sm font-medium text-white/50 leading-snug border-l-2 border-cyan-500/30 pl-3 italic">
+                          "{transcript.slice(-100)}..."
                         </div>
                         <div className="flex items-center gap-3 text-xs text-cyan-400/70 mt-2">
                           <div className="h-3.5 w-3.5 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin"></div>
-                          Generating optimal response...
+                          Aura is analyzing...
                         </div>
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3 opacity-50">
+                    )}
+
+                    {history.length > 0 ? (
+                      <div className="flex flex-col gap-8">
+                        {history.map((item, index) => (
+                          <div key={item.id} className={cn(
+                            "flex flex-col gap-3 transition-all duration-500 relative",
+                            index === 0 ? "opacity-100 scale-100" : "opacity-40 scale-[0.97] hover:opacity-100 hover:scale-100"
+                          )}>
+                            {index === 0 && (
+                              <div className="absolute -left-5 top-0 bottom-0 w-1 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(34,211,238,0.5)]" />
+                            )}
+                            
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-[10px] font-bold text-cyan-500/50 uppercase tracking-widest">
+                                {index === 0 ? "Active Response" : `Previous (${new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`}
+                              </div>
+                            </div>
+
+                            <div className={cn(
+                              "text-sm font-semibold leading-snug pl-1",
+                              index === 0 ? "text-white" : "text-slate-400"
+                            )}>
+                              {item.question}
+                            </div>
+                            
+                            <div className="flex flex-col gap-2">
+                              {item.answer.map((bullet, i) => (
+                                <div key={i} className={cn(
+                                  "flex items-start gap-3 rounded-xl p-3 transition-all border",
+                                  index === 0 
+                                    ? "bg-cyan-500/5 border-cyan-500/20 shadow-[0_0_20px_rgba(34,211,238,0.05)]" 
+                                    : "bg-white/[0.02] border-white/[0.05]"
+                                )}>
+                                  <div className={cn(
+                                    "w-1.5 h-1.5 rounded-full mt-1.5 shrink-0",
+                                    index === 0 ? "bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]" : "bg-slate-600"
+                                  )} />
+                                  <span className={cn(
+                                    "text-sm leading-relaxed",
+                                    index === 0 ? "text-slate-100" : "text-slate-400"
+                                  )}>{bullet}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : !isProcessing && (
+                      <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3 opacity-50 py-10">
                         <Activity size={24} className={isListening ? "animate-pulse" : ""} />
-                        <span className="text-xs font-medium">Listening for {persona.toLowerCase()} context...</span>
+                        <span className="text-xs font-medium text-center px-10">
+                          {isListening 
+                            ? `Listening for ${persona.toLowerCase()} context...` 
+                            : "Start listening to begin analysis"}
+                        </span>
                       </div>
                     )}
                   </div>
