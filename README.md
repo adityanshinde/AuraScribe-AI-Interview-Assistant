@@ -83,6 +83,7 @@ AuraScribe supports system-wide hotkeys (customizable in Settings):
 
 Click the **Gear Icon** in the widget to configure:
 - **Groq API Key**: Your personal key for AI processing.
+- **Audio Output (TTS)**: Select a specific device for the AI's spoken responses.
 - **Intelligence Model**: Choose between Llama 3.3 70B (Recommended), Llama 3.1 8B (Fast), or DeepSeek R1.
 - **Meeting Persona**: Select the focus of the AI.
 - **Resume & JD**: Paste your details for personalized grounding.

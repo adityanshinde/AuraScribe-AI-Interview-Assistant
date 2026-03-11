@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { GoogleGenAI, Modality } from "@google/genai";
 
 export interface Answer {
   bullets: string[];
@@ -19,24 +20,83 @@ export function useAIAssistant() {
   
   const transcriptBufferRef = useRef<string>('');
   const lastQuestionTimeRef = useRef<number>(0);
+  const lastProcessedTextRef = useRef<string>('');
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    audioRef.current = new Audio();
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  const playSpeech = useCallback(async (text: string) => {
+    const enableTTS = localStorage.getItem('aura_enable_tts') === 'true';
+    const outputDeviceId = localStorage.getItem('aura_output_device') || '';
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!enableTTS || !apiKey || !text || !audioRef.current) return;
+
+    try {
+      const ai = new GoogleGenAI({ apiKey });
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: `Say naturally: ${text}` }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: 'Kore' },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        const audioBlob = await fetch(`data:audio/wav;base64,${base64Audio}`).then(res => res.blob());
+        const audioUrl = URL.createObjectURL(audioBlob);
+        
+        if (audioRef.current) {
+          // Set output device if supported
+          if (outputDeviceId && (audioRef.current as any).setSinkId) {
+            try {
+              await (audioRef.current as any).setSinkId(outputDeviceId);
+            } catch (err) {
+              console.error('Error setting sink ID:', err);
+            }
+          }
+          
+          audioRef.current.src = audioUrl;
+          await audioRef.current.play();
+        }
+      }
+    } catch (error) {
+      console.error('TTS Error:', error);
+    }
+  }, []);
 
   const processTranscript = useCallback(async (newText: string) => {
     // Append to buffer
     transcriptBufferRef.current += ' ' + newText;
     
-    // Keep buffer to last 1500 characters to avoid huge context
-    if (transcriptBufferRef.current.length > 1500) {
-      transcriptBufferRef.current = transcriptBufferRef.current.slice(-1500);
+    // Keep buffer to last 1000 characters to avoid huge context and reduce latency
+    if (transcriptBufferRef.current.length > 1000) {
+      transcriptBufferRef.current = transcriptBufferRef.current.slice(-1000);
     }
 
-    const now = Date.now();
-    if (now - lastQuestionTimeRef.current > 4000) { // 4 seconds debounce to match chunking
-      lastQuestionTimeRef.current = now; // Update immediately to prevent concurrent calls
+    // Only process if not already processing, text has changed significantly, and we have enough text
+    const currentText = transcriptBufferRef.current.trim();
+    if (!isProcessing && currentText.length > 10 && currentText !== lastProcessedTextRef.current) {
       try {
         setIsProcessing(true);
+        lastProcessedTextRef.current = currentText;
         
         const apiKey = localStorage.getItem('groq_api_key') || '';
-        const model = localStorage.getItem('groq_model') || 'llama-3.3-70b-versatile';
+        const model = localStorage.getItem('groq_model') || 'llama-3.1-8b-instant';
         const persona = localStorage.getItem('groq_persona') || 'Technical Interviewer';
         const resume = localStorage.getItem('groq_resume') || '';
         const jd = localStorage.getItem('groq_jd') || '';
@@ -75,7 +135,14 @@ export function useAIAssistant() {
               bullets: data.bullets,
               spoken: data.spoken
             });
+            
+            // Play speech if enabled
+            playSpeech(data.spoken);
           }
+
+          // Clear buffer after a successful detection to prevent re-detecting the same question
+          // We keep a tiny bit of context just in case
+          transcriptBufferRef.current = transcriptBufferRef.current.slice(-20);
         }
         setIsProcessing(false);
       } catch (error) {
@@ -83,12 +150,13 @@ export function useAIAssistant() {
         setIsProcessing(false);
       }
     }
-  }, []);
+  }, [isProcessing, playSpeech]);
 
   const resetAssistant = useCallback(() => {
     setDetectedQuestion(null);
     setAnswer(null);
     transcriptBufferRef.current = '';
+    lastProcessedTextRef.current = '';
   }, []);
 
   return { detectedQuestion, answer, isProcessing, processTranscript, resetAssistant };

@@ -71,13 +71,20 @@ async function startServer() {
         "watching",
         "be sure to like and subscribe",
         "thanks for listening",
-        "thank you so much"
+        "thank you so much",
+        "subtitle by",
+        "subtitles by",
+        "amara.org",
+        "english subtitles",
+        "re-edited by",
+        "translated by"
       ];
 
       const cleanText = text.trim().toLowerCase().replace(/[.,!?;:]/g, "");
       
-      // If the text is just one of the hallucinations and short, discard it
-      const isHallucination = hallucinations.some(h => cleanText === h || cleanText.includes(h) && text.length < 30);
+      // If the text is just one of the hallucinations and very short, discard it
+      // But don't discard if it's part of a longer sentence
+      const isHallucination = hallucinations.some(h => cleanText === h && text.length < 20);
       
       if (isHallucination || text.length < 2) {
         text = "";
@@ -106,15 +113,16 @@ async function startServer() {
         return res.status(400).json({ error: "No transcript provided" });
       }
 
-      let systemPrompt = `You are an expert AI assistant acting as a ${persona}. Analyze the transcript and output JSON.
-The JSON must have this exact structure:
+      let systemPrompt = `You are an expert AI assistant acting as a ${persona}.
+Analyze the transcript for questions. If a question is found, provide a high-quality answer.
+Output JSON structure:
 {
   "isQuestion": boolean,
-  "question": "extracted question if any, else empty string",
-  "confidence": 0.9,
-  "type": "behavioral or technical",
-  "bullets": ["hint 1", "hint 2"],
-  "spoken": "2-3 sentence verbal answer"
+  "question": "the detected question",
+  "confidence": 0.0-1.0,
+  "type": "behavioral/technical",
+  "bullets": ["key point 1", "key point 2"],
+  "spoken": "concise 2-3 sentence verbal response"
 }
 Only output valid JSON.`;
 
@@ -144,7 +152,7 @@ Only output valid JSON.`;
             content: `Transcript: "${transcript}"`
           }
         ],
-        model: customModel || "llama-3.3-70b-versatile",
+        model: customModel || "llama-3.1-8b-instant",
         response_format: { type: "json_object" },
       });
 

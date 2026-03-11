@@ -84,7 +84,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
 
         recorder.start();
 
-        // Stop and start a new chunk every 4 seconds to avoid rate limits while reducing lag
+        // Stop and start a new chunk every 3 seconds to avoid rate limits while reducing lag
         setTimeout(() => {
           if (recorder.state === 'recording') {
             recorder.stop();
@@ -92,7 +92,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
               recordNextChunk();
             }
           }
-        }, 4000);
+        }, 3000);
       };
 
       recordNextChunk();

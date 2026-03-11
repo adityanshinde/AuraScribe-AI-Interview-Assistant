@@ -35,6 +35,10 @@ export default function OverlayWidget() {
     toggleClickThrough: 'CommandOrControl+Shift+X'
   });
   
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedOutputDevice, setSelectedOutputDevice] = useState('');
+  const [enableTTS, setEnableTTS] = useState(false);
+  
   const [apiKey, setApiKey] = useState('');
   const [voiceModel, setVoiceModel] = useState('whisper-large-v3-turbo');
   const [model, setModel] = useState('llama-3.3-70b-versatile');
@@ -51,6 +55,8 @@ export default function OverlayWidget() {
     const savedJd = localStorage.getItem('groq_jd');
     const savedOpacity = localStorage.getItem('aura_opacity');
     const savedHotkeys = localStorage.getItem('aura_hotkeys');
+    const savedOutputDevice = localStorage.getItem('aura_output_device');
+    const savedEnableTTS = localStorage.getItem('aura_enable_tts') === 'true';
     
     if (savedKey) setApiKey(savedKey);
     if (savedVoiceModel) setVoiceModel(savedVoiceModel);
@@ -60,7 +66,18 @@ export default function OverlayWidget() {
     if (savedJd) setJd(savedJd);
     if (savedOpacity) setOpacity(parseInt(savedOpacity));
     if (savedHotkeys) setHotkeys(JSON.parse(savedHotkeys));
+    if (savedOutputDevice) setSelectedOutputDevice(savedOutputDevice);
+    setEnableTTS(savedEnableTTS);
   }, []);
+
+  useEffect(() => {
+    if (showSettings) {
+      navigator.mediaDevices.enumerateDevices().then(devices => {
+        const outputs = devices.filter(device => device.kind === 'audiooutput');
+        setAudioDevices(outputs);
+      });
+    }
+  }, [showSettings]);
 
   // Add to history when answer is received
   useEffect(() => {
@@ -84,6 +101,8 @@ export default function OverlayWidget() {
     localStorage.setItem('groq_jd', jd);
     localStorage.setItem('aura_opacity', opacity.toString());
     localStorage.setItem('aura_hotkeys', JSON.stringify(hotkeys));
+    localStorage.setItem('aura_output_device', selectedOutputDevice);
+    localStorage.setItem('aura_enable_tts', enableTTS.toString());
     
     if (ipc) {
       ipc.send('update-hotkeys', hotkeys);
@@ -319,6 +338,54 @@ export default function OverlayWidget() {
                   </select>
                 </div>
 
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-medium text-slate-400">Voice Model (STT)</label>
+                  <select 
+                    value={voiceModel}
+                    onChange={(e) => setVoiceModel(e.target.value)}
+                    className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
+                  >
+                    <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo (Recommended)</option>
+                    <option value="whisper-large-v3">Whisper Large V3</option>
+                    <option value="distil-whisper-large-v3-en">Distil Whisper V3 (English Only)</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-medium text-slate-400">Audio Output (TTS)</label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500 uppercase">{enableTTS ? 'On' : 'Off'}</span>
+                      <button 
+                        onClick={() => setEnableTTS(!enableTTS)}
+                        className={cn(
+                          "w-8 h-4 rounded-full relative transition-colors",
+                          enableTTS ? "bg-cyan-500" : "bg-slate-700"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all",
+                          enableTTS ? "left-4.5" : "left-0.5"
+                        )} />
+                      </button>
+                    </div>
+                  </div>
+                  {enableTTS && (
+                    <select 
+                      value={selectedOutputDevice}
+                      onChange={(e) => setSelectedOutputDevice(e.target.value)}
+                      className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
+                    >
+                      <option value="">Default Output</option>
+                      {audioDevices.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || `Output ${device.deviceId.slice(0, 5)}...`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
                 <button 
                   onClick={saveSettings}
                   className="mt-2 bg-white text-black hover:bg-slate-200 py-2.5 rounded-lg text-sm font-bold transition-colors shadow-[0_0_15px_rgba(255,255,255,0.15)]"
@@ -411,8 +478,17 @@ export default function OverlayWidget() {
                   <div className="flex-[1.2] p-5 bg-gradient-to-b from-indigo-900/10 to-transparent flex flex-col gap-4 overflow-y-auto no-drag">
                     <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <Zap size={10} /> AI Copilot
-                        {isProcessing && <span className="animate-pulse text-cyan-300/70 normal-case tracking-normal ml-1">Thinking...</span>}
+                        <Zap size={10} className={cn(isProcessing ? "text-cyan-400 animate-pulse" : "text-cyan-400")} /> 
+                        AI Copilot
+                        {isProcessing && (
+                          <div className="flex items-center gap-1.5 ml-2">
+                            <span className="flex h-1.5 w-1.5 relative">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+                            </span>
+                            <span className="animate-pulse text-cyan-300/70 text-[9px] font-medium normal-case tracking-normal">Aura is thinking...</span>
+                          </div>
+                        )}
                       </div>
                       {answer && (
                         <button 
