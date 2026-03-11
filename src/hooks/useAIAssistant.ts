@@ -1,7 +1,4 @@
 import { useState, useRef, useCallback } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export interface Answer {
   bullets: string[];
@@ -33,69 +30,46 @@ export function useAIAssistant() {
     }
 
     const now = Date.now();
-    if (now - lastQuestionTimeRef.current > 15000) { // 15 seconds debounce to avoid rate limits
+    if (now - lastQuestionTimeRef.current > 10000) { // 10 seconds debounce to avoid rate limits
+      lastQuestionTimeRef.current = now; // Update immediately to prevent concurrent calls
       try {
-        // 1. Detect Question
-        const detectResponse = await ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: `Analyze the following transcript and determine if the speaker is asking a question that requires an answer (e.g., an interview question, a technical question, or a request for explanation).
-          
-Transcript: "${newText}"`,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                isQuestion: { type: Type.BOOLEAN },
-                question: { type: Type.STRING, description: 'The extracted question' },
-                confidence: { type: Type.NUMBER, description: 'Confidence score between 0 and 1' },
-                type: { type: Type.STRING, description: 'e.g., behavioral, technical, HR' }
-              },
-              required: ['isQuestion', 'question', 'confidence', 'type']
-            }
-          }
+        setIsProcessing(true);
+        
+        const apiKey = localStorage.getItem('groq_api_key') || '';
+        const model = localStorage.getItem('groq_model') || 'llama-3.3-70b-versatile';
+
+        const response = await fetch('/api/analyze', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'x-model': model
+          },
+          body: JSON.stringify({ transcript: transcriptBufferRef.current })
         });
 
-        const detection = JSON.parse(detectResponse.text || '{}');
-
-        if (detection.isQuestion && detection.confidence > 0.6) {
-          lastQuestionTimeRef.current = now;
-          
-          setDetectedQuestion(detection);
-          setIsProcessing(true);
-
-          // 2. Generate Answer
-          const answerResponse = await ai.models.generateContent({
-            model: 'gemini-3.1-pro-preview',
-            contents: `You are an expert AI interview assistant. The user is being asked a question.
-Provide a concise, excellent answer.
-
-Context of conversation:
-${transcriptBufferRef.current}
-
-Question:
-${detection.question}
-
-Provide your response in JSON format with two fields:
-1. "bullets": An array of 3-5 short bullet points (hints).
-2. "spoken": A short 2-3 sentence verbal answer the user could say.`,
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  bullets: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  spoken: { type: Type.STRING }
-                },
-                required: ['bullets', 'spoken']
-              }
-            }
-          });
-
-          const answerData = JSON.parse(answerResponse.text || '{}');
-          setAnswer(answerData);
-          setIsProcessing(false);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
+
+        const data = await response.json();
+
+        if (data.isQuestion && data.confidence > 0.6 && data.question) {
+          setDetectedQuestion({
+            isQuestion: data.isQuestion,
+            question: data.question,
+            confidence: data.confidence,
+            type: data.type || 'general'
+          });
+          
+          if (data.bullets && data.spoken) {
+            setAnswer({
+              bullets: data.bullets,
+              spoken: data.spoken
+            });
+          }
+        }
+        setIsProcessing(false);
       } catch (error) {
         console.error('AI Processing Error:', error);
         setIsProcessing(false);

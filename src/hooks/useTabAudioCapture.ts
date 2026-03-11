@@ -1,7 +1,4 @@
 import { useState, useCallback, useRef } from 'react';
-import { GoogleGenAI } from '@google/genai';
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
   const [isListening, setIsListening] = useState(false);
@@ -54,20 +51,26 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
               const mimeType = recorder.mimeType || 'audio/webm';
               
               try {
-                const response = await ai.models.generateContent({
-                  model: 'gemini-3-flash-preview',
-                  contents: [
-                    {
-                      inlineData: {
-                        data: base64data,
-                        mimeType: mimeType
-                      }
-                    },
-                    { text: 'Transcribe this audio precisely. Only output the spoken words. If there is no speech, silence, or just background noise, output absolutely nothing.' }
-                  ]
+                const apiKey = localStorage.getItem('groq_api_key') || '';
+                const voiceModel = localStorage.getItem('groq_voice_model') || 'whisper-large-v3-turbo';
+                
+                const response = await fetch('/api/transcribe', {
+                  method: 'POST',
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiKey,
+                    'x-voice-model': voiceModel
+                  },
+                  body: JSON.stringify({ audioBase64: base64data, mimeType })
                 });
 
-                const text = response.text?.trim();
+                if (!response.ok) {
+                  throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const text = data.text?.trim();
+                
                 if (text && text.length > 2) {
                   setTranscript(prev => prev + (prev ? ' ' : '') + text);
                   onTranscriptUpdate(text);
@@ -81,7 +84,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
 
         recorder.start();
 
-        // Stop and start a new chunk every 15 seconds to avoid rate limits
+        // Stop and start a new chunk every 6 seconds to avoid rate limits while reducing lag
         setTimeout(() => {
           if (recorder.state === 'recording') {
             recorder.stop();
@@ -89,7 +92,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
               recordNextChunk();
             }
           }
-        }, 15000);
+        }, 6000);
       };
 
       recordNextChunk();
