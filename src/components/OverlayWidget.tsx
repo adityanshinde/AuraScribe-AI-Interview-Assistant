@@ -24,6 +24,7 @@ export default function OverlayWidget() {
   const [showSettings, setShowSettings] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [isMiniMode, setIsMiniMode] = useState(false);
+  const [isHidden, setIsHidden] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(true);
   const [opacity, setOpacity] = useState(90);
   const [persona, setPersona] = useState('Technical Interviewer');
@@ -101,6 +102,19 @@ export default function OverlayWidget() {
     if (savedHotkeys) setHotkeys(JSON.parse(savedHotkeys));
     if (savedOutputDevice) setSelectedOutputDevice(savedOutputDevice);
     setEnableTTS(savedEnableTTS);
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+Shift+H to toggle hide/show
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'h') {
+        e.preventDefault();
+        setIsHidden(prev => !prev);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   useEffect(() => {
@@ -185,25 +199,43 @@ export default function OverlayWidget() {
   return (
     <div 
       className={cn(
-        "p-2 flex flex-col font-sans relative group transition-all duration-300 ease-in-out",
-        isMiniMode ? "h-[180px] w-[350px]" : "h-full w-full"
+        "p-2 flex flex-col font-sans relative group transition-all duration-500 ease-in-out",
+        isHidden ? "h-14 w-14" : isMiniMode ? "h-[180px] w-[350px]" : "h-full w-full"
       )}
       style={{ opacity: opacity / 100 }}
     >
-      {/* Main Widget Container */}
-      <div className="flex-1 bg-[#0a0a0a]/90 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden text-slate-200 relative">
-        
-        {/* Header (Draggable via Electron) */}
-        <div className="drag-region h-12 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] shrink-0">
-          <div className="flex items-center gap-2.5">
-            <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-              <Sparkles size={10} className="text-white" />
-            </div>
-            <span className="font-semibold text-sm tracking-wide text-white/90">AuraScribe</span>
+      {isHidden ? (
+        <button 
+          onClick={() => setIsHidden(false)}
+          className="w-12 h-12 rounded-full bg-[#0a0a0a]/90 backdrop-blur-xl border border-white/10 flex items-center justify-center shadow-[0_0_20px_rgba(34,211,238,0.3)] hover:scale-110 transition-transform group/btn"
+          title="Show AuraScribe (Ctrl+Shift+H)"
+        >
+          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-cyan-500/20 group-hover/btn:shadow-cyan-500/40 transition-shadow">
+            <Sparkles size={16} className="text-white" />
           </div>
-          <div className="flex gap-2 no-drag items-center">
-            <button 
-              onClick={() => setShowHistory(!showHistory)}
+        </button>
+      ) : (
+        <div className="flex-1 bg-[#0a0a0a]/90 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden text-slate-200 relative">
+          
+          {/* Header (Draggable via Electron) */}
+          <div className="drag-region h-12 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                <Sparkles size={10} className="text-white" />
+              </div>
+              <span className="font-semibold text-sm tracking-wide text-white/90">AuraScribe</span>
+            </div>
+            <div className="flex gap-2 no-drag items-center">
+              <button 
+                onClick={() => setIsHidden(true)}
+                title="Hide to Bubble (Ctrl+Shift+H)"
+                className="p-1.5 hover:bg-white/5 rounded-md transition-colors text-slate-400 hover:text-white"
+              >
+                <EyeOff size={14} />
+              </button>
+
+              <button 
+                onClick={() => setShowHistory(!showHistory)}
               title="Session History"
               className={cn("p-1.5 hover:bg-white/5 rounded-md transition-colors", showHistory && "text-cyan-400")}
             >
@@ -625,13 +657,15 @@ export default function OverlayWidget() {
           )}
         </div>
       </div>
+    )}
 
-      {/* Resize Handle Indicator (Bottom Right) */}
-      <div className="absolute bottom-3 right-3 pointer-events-none text-slate-500 opacity-30 group-hover:opacity-100 transition-opacity">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 0L0 12H12V0Z" fill="currentColor"/>
-        </svg>
-      </div>
+    {!isHidden && (
+        <div className="absolute bottom-3 right-3 pointer-events-none text-slate-500 opacity-30 group-hover:opacity-100 transition-opacity">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 0L0 12H12V0Z" fill="currentColor"/>
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
