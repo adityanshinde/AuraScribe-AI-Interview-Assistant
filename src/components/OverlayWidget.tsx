@@ -44,7 +44,7 @@ export default function OverlayWidget() {
   const [model, setModel] = useState('llama-3.3-70b-versatile');
   
   const { detectedQuestion, answer, isProcessing, processTranscript, resetAssistant } = useAIAssistant();
-  const { isListening, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript);
+  const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript);
 
   useEffect(() => {
     const savedKey = localStorage.getItem('groq_api_key');
@@ -406,7 +406,12 @@ export default function OverlayWidget() {
               {/* Status Bar */}
               <div className="px-5 py-3 border-b border-white/5 bg-black/20 flex justify-between items-center no-drag shrink-0">
                 <div className="flex items-center gap-3">
-                  {isListening ? (
+                  {isRateLimited ? (
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                    </span>
+                  ) : isListening ? (
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
@@ -416,7 +421,11 @@ export default function OverlayWidget() {
                   )}
                   <div className="flex flex-col">
                     <span className="text-xs font-medium text-slate-400">
-                      {isListening ? 'Listening...' : 'Ready'}
+                      {isRateLimited ? (
+                        <span className="text-amber-400 animate-pulse">Rate Limited...</span>
+                      ) : (
+                        isListening ? 'Listening...' : 'Ready'
+                      )}
                     </span>
                     <span className="text-[8px] text-slate-600 uppercase tracking-tighter">{persona}</span>
                   </div>

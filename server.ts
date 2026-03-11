@@ -122,7 +122,17 @@ async function startServer() {
       res.json({ text });
     } catch (error: any) {
       console.error("Transcription error:", error);
-      res.status(500).json({ error: error.message || "Transcription failed" });
+      const status = error.status || 500;
+      const message = error.message || "Transcription failed";
+      
+      if (status === 429) {
+        return res.status(429).json({ 
+          error: "Rate limit reached. Please wait a moment.",
+          retryAfter: error.headers?.['retry-after'] || 3
+        });
+      }
+      
+      res.status(status).json({ error: message });
     } finally {
       if (tmpFilePath && fs.existsSync(tmpFilePath)) {
         fs.unlinkSync(tmpFilePath);

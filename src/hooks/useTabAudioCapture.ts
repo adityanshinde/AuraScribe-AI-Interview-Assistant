@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 
 export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
   const [isListening, setIsListening] = useState(false);
+  const [isRateLimited, setIsRateLimited] = useState(false);
   const [transcript, setTranscript] = useState('');
   const streamRef = useRef<MediaStream | null>(null);
   const isRecordingRef = useRef(false);
@@ -64,10 +65,20 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
                   body: JSON.stringify({ audioBase64: base64data, mimeType })
                 });
 
+                if (response.status === 429) {
+                  setIsRateLimited(true);
+                  const data = await response.json();
+                  console.warn('Rate limited:', data.error);
+                  // Auto-reset rate limit after a few seconds
+                  setTimeout(() => setIsRateLimited(false), (data.retryAfter || 3) * 1000);
+                  return;
+                }
+
                 if (!response.ok) {
                   throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
+                setIsRateLimited(false);
                 const data = await response.json();
                 const text = data.text?.trim();
                 
@@ -88,7 +99,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
 
         recorder.start();
 
-        // Stop and start a new chunk every 3 seconds to avoid rate limits while reducing lag
+        // Stop and start a new chunk every 5 seconds to avoid rate limits while reducing lag
         setTimeout(() => {
           if (recorder.state === 'recording') {
             recorder.stop();
@@ -96,7 +107,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
               recordNextChunk();
             }
           }
-        }, 3000);
+        }, 5000);
       };
 
       recordNextChunk();
@@ -128,5 +139,5 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
     setTranscript('');
   }, []);
 
-  return { isListening, transcript, startListening, stopListening, clearTranscript, stream: streamRef.current };
+  return { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream: streamRef.current };
 }
