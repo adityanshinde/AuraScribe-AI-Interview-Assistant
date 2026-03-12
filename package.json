@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\""
+    "electron:dev": "node electron-dev.cjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
