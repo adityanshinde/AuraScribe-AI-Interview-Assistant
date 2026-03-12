@@ -289,6 +289,7 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
           model: "llama-3.3-70b-versatile",
           response_format: { type: "json_object" },
           temperature: 0.4, // Lower = more accurate, less hallucination
+          logprobs: true,
         });
 
         let chatData: any = { sections: [] };
@@ -298,8 +299,18 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
           chatData = { sections: [] };
         }
 
+        // Compute logprob-based confidence
+        let confidence = 1.0;
+        const tokens = (chatCompletion.choices[0] as any)?.logprobs?.content;
+        if (tokens && Array.isArray(tokens) && tokens.length > 0) {
+          const avgLogProb = tokens.reduce((s: number, t: any) => s + (t.logprob || 0), 0) / tokens.length;
+          confidence = Math.exp(avgLogProb);
+          console.log(`[Chat] Answer generated with logprob confidence: ${confidence.toFixed(2)}`);
+        }
+
         // ── STEP 4: Self-Verification for hard/system_design questions ─
-        if (difficulty === 'hard' || questionType === 'system_design') {
+        // Use logprobs trick: ONLY run verification if confidence is low (< 0.8)
+        if ((difficulty === 'hard' || questionType === 'system_design') && confidence < 0.8) {
           try {
             const verifyCompletion = await groq.chat.completions.create({
               messages: [
@@ -358,7 +369,8 @@ Return ONLY valid JSON: {"valid": boolean, "issues": ["issue description"], "imp
         // ════════════════════════════════════════════════════════════════
       } else {
         const voiceSystemPrompt = `You are an AI assistant helping a candidate during a live interview.
-Analyze the transcript and determine if the interviewer asked a question.
+Analyze the transcript and determine if the interviewer asked a REAL interview question.
+Ignore conversational filler, pleasantries, or technical difficulties (e.g., "Can you hear me?", "How are you?").
 
 Return ONLY valid JSON. No markdown. No extra text.
 
@@ -378,7 +390,8 @@ JSON FORMAT:
 }
 
 DETECTION RULES:
-- If transcript contains a question: isQuestion = true, extract the main question
+- If transcript contains a genuine interview question: isQuestion = true, extract the main question
+- If it's just filler/pleasantries (e.g. "I can see your screen", "Let's get started"): isQuestion = false
 - If no question detected: isQuestion = false, return empty bullets array
 
 BULLET STYLE — TECHNICAL QUESTIONS:
@@ -416,14 +429,35 @@ Return ONLY JSON.`;
           model: customModel || "llama-3.1-8b-instant",
           response_format: { type: "json_object" },
           temperature: 0.3, // Low temperature = fast, accurate, deterministic
+          logprobs: true,
         });
+
+        // Calculate actual logprob confidence
+        const voiceTokens = (voiceCompletion.choices[0] as any)?.logprobs?.content;
+        let logprobConfidence = -1;
+        if (voiceTokens && Array.isArray(voiceTokens) && voiceTokens.length > 0) {
+          const avgLogProb = voiceTokens.reduce((s: number, t: any) => s + (t.logprob || 0), 0) / voiceTokens.length;
+          logprobConfidence = Math.exp(avgLogProb);
+          console.log(`[Voice] Question detection API completed with avg logprob confidence: ${logprobConfidence.toFixed(2)}`);
+        }
 
         let voiceData: any = { isQuestion: false };
         try {
           voiceData = JSON.parse(voiceCompletion.choices[0]?.message?.content || "{}");
+          
+          if (logprobConfidence >= 0) {
+            voiceData.confidence = logprobConfidence; // Override self-reported LLM confidence
+          }
         } catch {
           voiceData = { isQuestion: false };
         }
+        
+        // Anti-hallucination guard
+        if (voiceData.isQuestion && voiceData.confidence < 0.2) {
+           console.log(`[Voice] Rejected question due to low confidence (< 0.2)`);
+           voiceData.isQuestion = false;
+        }
+        
         return res.json(voiceData);
       }
 

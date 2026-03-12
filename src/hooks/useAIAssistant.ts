@@ -26,6 +26,7 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
   const lastQuestionTimeRef = useRef<number>(0);
   const lastProcessedTextRef = useRef<string>('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     audioRef.current = new Audio();
@@ -109,9 +110,31 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
       transcriptBufferRef.current = transcriptBufferRef.current.slice(-1000);
     }
 
-    // Only process if not already processing, text has changed significantly, and we have enough text
     const currentText = transcriptBufferRef.current.trim();
-    if (!isProcessing && currentText.length > 10 && currentText !== lastProcessedTextRef.current) {
+    
+    // Clear existing debounce timer
+    if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+    }
+
+    // Smart Debouncing: Wait 800ms of "silence" before we consider sending the text
+    debounceTimerRef.current = setTimeout(async () => {
+      // Only process if not already processing, text has changed significantly, and we have enough text
+      if (!isProcessing && currentText.length > 15 && currentText !== lastProcessedTextRef.current) {
+        
+        // ── Heuristics Pre-filter ──
+        // Check if it looks remotely like a question to avoid wasting LLM/API calls
+        const lowerText = currentText.toLowerCase();
+        
+        // Look for question marks OR common question framing words
+        const hasQuestionMark = currentText.includes('?');
+        const hasQuestionWord = /\b(what|how|why|when|where|who|can you|could you|explain|describe|tell me|is it|does it|are there|would you|should we)\b/.test(lowerText);
+        
+        if (!hasQuestionMark && !hasQuestionWord) {
+            // Not a question, skip processing entirely.
+            console.log("[Client] Heuristic filter skipped non-question:", currentText.slice(-50));
+            return;
+        }
       try {
         setIsProcessing(true);
         lastProcessedTextRef.current = currentText;
@@ -176,6 +199,7 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
         setIsProcessing(false);
       }
     }
+    }, 800); // Wait 800ms between transcript updates before processing
   }, [isProcessing, isSpeaking, playSpeech, onQuestionDetected]);
 
   const askQuestion = useCallback(async (questionText: string) => {
