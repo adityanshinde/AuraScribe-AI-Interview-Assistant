@@ -4,6 +4,9 @@ import { GoogleGenAI, Modality } from "@google/genai";
 export interface Answer {
   bullets: string[];
   spoken: string;
+  explanation?: string;
+  code?: string;
+  codeLanguage?: string;
 }
 
 export interface QuestionDetection {
@@ -18,7 +21,7 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  
+
   const transcriptBufferRef = useRef<string>('');
   const lastQuestionTimeRef = useRef<number>(0);
   const lastProcessedTextRef = useRef<string>('');
@@ -26,10 +29,10 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
 
   useEffect(() => {
     audioRef.current = new Audio();
-    
+
     const handleStart = () => setIsSpeaking(true);
     const handleEnd = () => setIsSpeaking(false);
-    
+
     if (audioRef.current) {
       audioRef.current.addEventListener('play', handleStart);
       audioRef.current.addEventListener('ended', handleEnd);
@@ -73,7 +76,7 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
       if (base64Audio) {
         const audioBlob = await fetch(`data:audio/wav;base64,${base64Audio}`).then(res => res.blob());
         const audioUrl = URL.createObjectURL(audioBlob);
-        
+
         if (audioRef.current) {
           // Set output device if supported
           if (outputDeviceId && (audioRef.current as any).setSinkId) {
@@ -83,7 +86,7 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
               console.error('Error setting sink ID:', err);
             }
           }
-          
+
           audioRef.current.src = audioUrl;
           await audioRef.current.play();
         }
@@ -100,7 +103,7 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
 
     // Append to buffer
     transcriptBufferRef.current += ' ' + newText;
-    
+
     // Keep buffer to last 1000 characters to avoid huge context and reduce latency
     if (transcriptBufferRef.current.length > 1000) {
       transcriptBufferRef.current = transcriptBufferRef.current.slice(-1000);
@@ -112,7 +115,7 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
       try {
         setIsProcessing(true);
         lastProcessedTextRef.current = currentText;
-        
+
         const apiKey = localStorage.getItem('groq_api_key') || '';
         const model = localStorage.getItem('groq_model') || 'llama-3.1-8b-instant';
         const persona = localStorage.getItem('groq_persona') || 'Technical Interviewer';
@@ -121,13 +124,13 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
 
         const response = await fetch('/api/analyze', {
           method: 'POST',
-          headers: { 
+          headers: {
             'Content-Type': 'application/json',
             'x-api-key': apiKey,
             'x-model': model,
             'x-persona': persona
           },
-          body: JSON.stringify({ 
+          body: JSON.stringify({
             transcript: transcriptBufferRef.current,
             resume,
             jd
@@ -147,13 +150,13 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
             confidence: data.confidence,
             type: data.type || 'general'
           });
-          
+
           if (data.bullets && data.spoken) {
             setAnswer({
               bullets: data.bullets,
               spoken: data.spoken
             });
-            
+
             // Play speech if enabled
             playSpeech(data.spoken);
           }
@@ -175,6 +178,62 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
     }
   }, [isProcessing, isSpeaking, playSpeech, onQuestionDetected]);
 
+  const askQuestion = useCallback(async (questionText: string) => {
+    if (!questionText.trim() || isProcessing) return;
+    try {
+      setIsProcessing(true);
+
+      const apiKey = localStorage.getItem('groq_api_key') || '';
+      const model = localStorage.getItem('groq_model') || 'llama-3.1-8b-instant';
+      const persona = localStorage.getItem('groq_persona') || 'Technical Interviewer';
+      const resume = localStorage.getItem('groq_resume') || '';
+      const jd = localStorage.getItem('groq_jd') || '';
+
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'x-model': model,
+          'x-persona': persona,
+          'x-mode': 'chat'
+        },
+        body: JSON.stringify({ transcript: questionText, resume, jd })
+      });
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+      const data = await response.json();
+
+      // For manual chat, we always treat it as a question regardless of detection
+      const detectedQ = {
+        isQuestion: true,
+        question: questionText,
+        confidence: 1.0,
+        type: data.type || 'general'
+      };
+      setDetectedQuestion(detectedQ);
+
+      // Always store the answer — server guarantees at least sections or explanation or bullets
+      const ans: Answer = {
+        bullets: Array.isArray(data.bullets) ? data.bullets : [],
+        spoken: data.spoken || '',
+        explanation: data.explanation || data.answer || data.response || '',
+        code: data.code || '',
+        codeLanguage: data.codeLanguage || data.language || '',
+        sections: data.sections || [],
+      } as any;
+      setAnswer(ans);
+      playSpeech(data.spoken || '');
+
+
+      setIsProcessing(false);
+    } catch (error) {
+      console.error('Chat AI Error:', error);
+      setIsProcessing(false);
+    }
+  }, [isProcessing, playSpeech]);
+
   const resetAssistant = useCallback(() => {
     setDetectedQuestion(null);
     setAnswer(null);
@@ -182,5 +241,5 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
     lastProcessedTextRef.current = '';
   }, []);
 
-  return { detectedQuestion, answer, isProcessing, processTranscript, resetAssistant };
+  return { detectedQuestion, answer, isProcessing, processTranscript, askQuestion, resetAssistant };
 }

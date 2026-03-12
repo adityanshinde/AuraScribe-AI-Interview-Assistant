@@ -1,52 +1,72 @@
-const { app, BrowserWindow, globalShortcut, desktopCapturer } = require('electron');
+const { app, BrowserWindow, globalShortcut, desktopCapturer, ipcMain } = require('electron');
 const path = require('path');
 
-// 1. Invisible in Dock (macOS)
+// Invisible in Dock (macOS)
 if (process.platform === 'darwin') {
   app.dock.hide();
 }
 
-// 2. Disguise in Task Manager (or set real name)
 app.name = 'AuraScribe';
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 480,               // Increased default width
-    height: 750,              // Increased default height
-    minWidth: 350,            // Minimum width so UI doesn't break
-    minHeight: 500,           // Minimum height
-    resizable: true,          // Allow user to resize the window!
-    alwaysOnTop: true,        // Keeps it from minimizing
-    skipTaskbar: true,        // Invisible in Taskbar and Alt+Tab
-    transparent: true,        // Transparent background for rounded corners
-    frame: false,             // No borders or close buttons
-    hasShadow: true,          // Add shadow for depth
-    type: 'toolbar',          // Helps hide from system window switchers
+    width: 480,
+    height: 750,
+    minWidth: 350,
+    minHeight: 500,
+    resizable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,       // Invisible in Taskbar / Alt+Tab
+    transparent: true,
+    frame: false,
+    hasShadow: true,
+    type: 'toolbar',
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false, // Needed for some media capture APIs
+      contextIsolation: false,
     },
   });
 
-  // Force it to stay on top of EVERYTHING
   win.setAlwaysOnTop(true, 'screen-saver');
+  win.setContentProtection(true); // Invisible on screen share (Zoom, Teams, OBS)
 
-  // 4. Invisible on Screen Share (Zoom, Teams, OBS)
-  win.setContentProtection(true);
+  // ============================================================
+  // STEALTH CURSOR: Click-through ON by default.
+  // The overlay is always transparent to mouse clicks — the cursor
+  // never visibly moves to AuraScribe. Interaction is keyboard-only.
+  // ============================================================
+  let isClickThrough = true;
+  win.setIgnoreMouseEvents(true, { forward: true });
 
-  // ==========================================================
-  // FIX: Handle Screen/Audio Capture in Electron
-  // Electron doesn't have a built-in screen picker UI like Chrome.
-  // This intercepts the request and automatically selects the entire screen
-  // and system audio (loopback) so it works instantly without a popup!
-  // ==========================================================
+  // ============================================================
+  // IPC: Renderer tells us when chat input is focused / blurred.
+  // We temporarily disable click-through so keyboard works.
+  // ============================================================
+  ipcMain.on('chat-input-focused', () => {
+    // Allow keyboard input — disable click-through (but mouse still shows on app behind)
+    win.setIgnoreMouseEvents(false);
+    // Bring window to front so keystrokes reach it, but don't steal cursor
+    win.showInactive(); // show without moving focus away from other app's mouse position
+    win.focus();
+  });
+
+  ipcMain.on('chat-input-blurred', () => {
+    // Re-enter click-through — cursor returns fully to app behind
+    if (isClickThrough) {
+      win.setIgnoreMouseEvents(true, { forward: true });
+    }
+  });
+
+  // ============================================================
+  // Handle Screen/Audio Capture in Electron
+  // Auto-selects the screen + system audio (loopback) without a popup.
+  // ============================================================
   win.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-      // Automatically select the first screen and capture system audio
       callback({ video: sources[0], audio: 'loopback' });
     }).catch(err => {
       console.error('Error getting sources:', err);
-      callback(); // Cancel if error
+      callback();
     });
   });
 
@@ -55,20 +75,20 @@ function createWindow() {
     callback(true);
   });
 
-  // Load the local server
   win.loadURL('http://localhost:3000');
 
-  // Handle Always on Top toggle from UI
-  const { ipcMain } = require('electron');
+  // ============================================================
+  // IPC: UI controls
+  // ============================================================
   ipcMain.on('set-always-on-top', (event, flag) => {
     win.setAlwaysOnTop(flag, 'screen-saver');
   });
 
-  // Handle hotkey updates
   ipcMain.on('update-hotkeys', (event, hotkeys) => {
-    globalShortcut.unregisterAll();
-    
-    // Re-register with new keys
+    // Unregister only the user-configurable ones, keep built-ins
+    try { globalShortcut.unregister(hotkeys.toggleClickThrough); } catch (e) { }
+    try { globalShortcut.unregister(hotkeys.toggleHide); } catch (e) { }
+
     globalShortcut.register(hotkeys.toggleClickThrough, () => {
       isClickThrough = !isClickThrough;
       win.setIgnoreMouseEvents(isClickThrough, { forward: true });
@@ -84,19 +104,29 @@ function createWindow() {
     });
   });
 
-  // ==========================================================
+  // ============================================================
   // GLOBAL KEYBOARD SHORTCUTS
-  // ==========================================================
+  // ============================================================
 
-  // Toggle Click-Through (Default is OFF so you can drag the window)
-  let isClickThrough = false;
+  // Ctrl+Shift+Space ── Focus Chat Input (STEALTH)
+  // Temporarily disables click-through so keyboard goes to AuraScribe.
+  // After typing + Enter, the renderer sends 'chat-input-blurred' and
+  // click-through re-enables automatically. Cursor never visibly moves.
+  globalShortcut.register('CommandOrControl+Shift+Space', () => {
+    win.setIgnoreMouseEvents(false); // Allow keyboard focus
+    win.showInactive();
+    win.focus();
+    win.webContents.send('focus-chat-input'); // Tell renderer to open chat + focus textarea
+  });
+
+  // Ctrl+Shift+X ── Toggle Click-Through manually
   globalShortcut.register('CommandOrControl+Shift+X', () => {
     isClickThrough = !isClickThrough;
     win.setIgnoreMouseEvents(isClickThrough, { forward: true });
-    console.log('Click-through is now:', isClickThrough ? 'ON' : 'OFF');
+    console.log('Click-through:', isClickThrough ? 'ON' : 'OFF');
   });
 
-  // Press Ctrl+Shift+H to Hide/Show the overlay completely
+  // Ctrl+Shift+H ── Hide / Show overlay
   globalShortcut.register('CommandOrControl+Shift+H', () => {
     if (win.isVisible()) {
       win.hide();

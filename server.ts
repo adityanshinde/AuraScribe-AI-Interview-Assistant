@@ -33,7 +33,7 @@ async function startServer() {
       const customKey = req.headers['x-api-key'] as string;
       const customVoiceModel = req.headers['x-voice-model'] as string;
       const groq = getGroq(customKey);
-      
+
       const { audioBase64, mimeType } = req.body;
       if (!audioBase64) {
         return res.status(400).json({ error: "No audio provided" });
@@ -50,7 +50,7 @@ async function startServer() {
       });
 
       let text = transcription.text || "";
-      
+
       // Filter out common Whisper hallucinations on silence or background noise
       const hallucinations = [
         "thank you",
@@ -103,7 +103,7 @@ async function startServer() {
       ];
 
       const cleanText = text.trim().toLowerCase().replace(/[.,!?;:]/g, "");
-      
+
       // Technical term corrections (Whisper often mishears these)
       const corrections: Record<string, string> = {
         "virtual dome": "virtual DOM",
@@ -138,7 +138,7 @@ async function startServer() {
       // If the text is just one of the hallucinations and very short, discard it
       // But don't discard if it's part of a longer sentence
       const isHallucination = hallucinations.some(h => cleanText === h && text.length < 20);
-      
+
       if (isHallucination || text.length < 2) {
         text = "";
       }
@@ -148,14 +148,14 @@ async function startServer() {
       console.error("Transcription error:", error);
       const status = error.status || 500;
       const message = error.message || "Transcription failed";
-      
+
       if (status === 429) {
-        return res.status(429).json({ 
+        return res.status(429).json({
           error: "Rate limit reached. Please wait a moment.",
           retryAfter: error.headers?.['retry-after'] || 3
         });
       }
-      
+
       res.status(status).json({ error: message });
     } finally {
       if (tmpFilePath && fs.existsSync(tmpFilePath)) {
@@ -169,79 +169,270 @@ async function startServer() {
       const customKey = req.headers['x-api-key'] as string;
       const customModel = req.headers['x-model'] as string;
       const persona = req.headers['x-persona'] as string || 'Technical Interviewer';
+      const mode = req.headers['x-mode'] as string || 'voice';
       const groq = getGroq(customKey);
-      
+
       const { transcript, resume, jd } = req.body;
       if (!transcript) {
         return res.status(400).json({ error: "No transcript provided" });
       }
 
-      let systemPrompt = `You are an expert AI assistant acting as a ${persona}.
-Analyze the transcript for questions. If a question is found, provide a high-quality answer optimized for an interview setting.
+      // ════════════════════════════════════════════════════════════════
+      // CHAT MODE — Adaptive Prompting + Self-Verification Pipeline
+      // ════════════════════════════════════════════════════════════════
+      if (mode === 'chat') {
+
+        // ── STEP 1: Difficulty Classifier (cheap + fast) ──────────────
+        let questionType = 'concept';
+        let difficulty = 'medium';
+
+        try {
+          const classifyCompletion = await groq.chat.completions.create({
+            messages: [
+              {
+                role: "system",
+                content: `You are a classifier. Return ONLY valid JSON, nothing else.
+Schema: {"type": "concept | coding | system_design | behavioral", "difficulty": "easy | medium | hard"}
+Rules:
+- concept: definitions, explanations, comparisons of technologies
+- coding: algorithm, data structure, write code, implement
+- system_design: architecture, distributed systems, scalability, design a system
+- behavioral: experience, soft skills, tell me about a time
+- easy: basic definitions, junior-level
+- medium: trade-offs, algorithms, intermediate
+- hard: system design, architecture, advanced algorithms`
+              },
+              { role: "user", content: `Classify: ${transcript}` }
+            ],
+            model: "llama-3.1-8b-instant",
+            response_format: { type: "json_object" },
+            temperature: 0.1,
+          });
+          let classifyData: any = {};
+          try { classifyData = JSON.parse(classifyCompletion.choices[0]?.message?.content || "{}"); } catch { }
+          questionType = classifyData.type || 'concept';
+          difficulty = classifyData.difficulty || 'medium';
+        } catch { /* use defaults */ }
+
+        // ── STEP 2: Build Adaptive Prompt ─────────────────────────────
+        // Section structure hint based on question type
+        const sectionHint = questionType === 'coding'
+          ? `Sections MUST be: "Problem Understanding", "Approach & Logic", "Complexity Analysis". Always fill the code field with complete working code.`
+          : questionType === 'behavioral'
+            ? `Sections MUST be: "Situation", "What I Did", "Result & Learnings". Write in confident first-person.`
+            : questionType === 'system_design'
+              ? `Sections: "Architecture Overview", "Core Components", "Trade-offs & Bottlenecks", "Scaling Strategy". Focus on distributed systems thinking.`
+              : `If comparing TWO things: "X Overview", "Y Overview", "Key Differences", "When To Use Which". If one concept: "What It Is", "How It Works", "Trade-offs", "When To Use".`;
+
+        // Difficulty-aware depth instructions
+        const depthHint = difficulty === 'easy'
+          ? `DEPTH: Focus on clarity and intuition. Avoid unnecessary complexity. Prioritize simple, memorable explanations a junior can follow.`
+          : difficulty === 'hard'
+            ? `DEPTH: Break down reasoning deeply. Discuss scalability, reliability, and bottlenecks. Mention trade-offs between approaches. Cite Big-O where relevant.`
+            : `DEPTH: Include practical engineering trade-offs. Mention complexity where relevant. Balance theory with real-world usage.`;
+
+        const chatSystemPrompt = `You are a senior software engineer, system design mentor, and interview coach.
+
+Your task: answer the user's question in a clear, structured, interview-ready format.
+
+STRICT OUTPUT RULE:
+Return ONLY valid JSON. Do NOT include markdown, code fences, commentary, or any text outside the JSON object.
+
+JSON SCHEMA (match exactly):
+{
+  "sections": [
+    {
+      "title": "Short section title (2-5 words)",
+      "content": "2-4 sentences explaining this section clearly. Use confident first-person tone (I typically... / In my experience...). NO bullet points inside content.",
+      "points": [
+        "Short key takeaway (max 12 words)",
+        "Short key takeaway (max 12 words)"
+      ]
+    }
+  ],
+  "code": "Complete working code if question asks for coding. Otherwise empty string. No markdown fences.",
+  "codeLanguage": "language name (csharp, python, javascript, java, sql, etc.) or empty string"
+}
+
+SECTION RULES:
+${sectionHint}
+- Minimum 2 sections, maximum 5 sections.
+- Each "content": 2-4 sentences, natural prose, NO nested bullets.
+- Each "points": 2-4 items, max 12 words each, crisp and scannable.
+- Titles: short, bold-worthy (e.g. "Lambda Syntax", "Time Complexity", "Key Trade-offs").
+
+CODE RULES:
+- Only include code if the question asks to write, implement, create, or demonstrate code.
+- If code is included: complete and runnable, comments on key lines, handle edge cases (null, empty, etc.).
+- No markdown fences inside the "code" field.
+
+${depthHint}
 
 CONTEXT:
-- User Resume: ${resume || 'Not provided'}
-- Job Description: ${jd || 'Not provided'}
+Resume: ${resume || 'Not provided'}
+Job Description: ${jd || 'Not provided'}
+Persona: ${persona}
 
-INSTRUCTIONS:
-1. Detect if the transcript contains a question.
-2. If yes, provide a "Short but Detailed" answer.
-3. FORMATTING:
-   - Use 3-4 "Glanceable" bullet points.
-   - Each bullet should be a "Talking Point" (max 10-12 words).
-   - For behavioral questions, use the STAR method (Situation, Task, Action, Result) in the bullets.
-   - For technical questions, include specific keywords, Big O, or snippets.
-4. Use the Resume and JD context to personalize the answer.
-5. "spoken" field should be a punchy 1-2 sentence "Elevator Pitch" response.
+PERSONA ADJUSTMENTS:
+${persona === 'Technical Interviewer' ? '- Emphasize architecture decisions, Big-O complexity, trade-offs, and production concerns.' : ''}
+${persona === 'Executive Assistant' ? '- Emphasize business impact, strategic implications, and communication clarity.' : ''}
+${persona === 'Language Translator' ? '- Emphasize language nuance, cultural context, and translation accuracy.' : ''}
 
-Output JSON structure:
+FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JSON.`;
+
+        // ── STEP 3: Generate Answer ────────────────────────────────────
+        const chatCompletion = await groq.chat.completions.create({
+          messages: [
+            { role: "system", content: chatSystemPrompt },
+            { role: "user", content: `Question: ${transcript}` }
+          ],
+          model: "llama-3.3-70b-versatile",
+          response_format: { type: "json_object" },
+          temperature: 0.4, // Lower = more accurate, less hallucination
+        });
+
+        let chatData: any = { sections: [] };
+        try {
+          chatData = JSON.parse(chatCompletion.choices[0]?.message?.content || "{}");
+        } catch {
+          chatData = { sections: [] };
+        }
+
+        // ── STEP 4: Self-Verification for hard/system_design questions ─
+        if (difficulty === 'hard' || questionType === 'system_design') {
+          try {
+            const verifyCompletion = await groq.chat.completions.create({
+              messages: [
+                {
+                  role: "system",
+                  content: `You are a senior engineer reviewing an AI-generated interview answer for correctness.
+Check for: factual errors, incorrect Big-O complexity, hallucinated APIs or syntax, missing important edge cases.
+Return ONLY valid JSON: {"valid": boolean, "issues": ["issue description"], "improvedSections": <same sections array format, or null if valid>}`
+                },
+                {
+                  role: "user",
+                  content: `Original Question: ${transcript}\nGenerated Answer: ${JSON.stringify(chatData)}`
+                }
+              ],
+              model: "llama-3.1-8b-instant", // Fast + cheap for verification
+              response_format: { type: "json_object" },
+              temperature: 0.2,
+            });
+
+            let verifyData: any = { valid: true };
+            try { verifyData = JSON.parse(verifyCompletion.choices[0]?.message?.content || "{}"); } catch { }
+
+            if (!verifyData.valid && Array.isArray(verifyData.improvedSections) && verifyData.improvedSections.length > 0) {
+              chatData.sections = verifyData.improvedSections;
+              console.log(`[Verify] Fixed issues: ${verifyData.issues?.join(', ')}`);
+            }
+          } catch { /* use original answer if verification fails */ }
+        }
+
+        // ── STEP 5: Normalize + Return ─────────────────────────────────
+        const sections = Array.isArray(chatData.sections) ? chatData.sections : [];
+        // Fallback: if model returned old-style explanation, wrap it
+        if (sections.length === 0 && (chatData.explanation || chatData.answer)) {
+          sections.push({
+            title: "Answer",
+            content: chatData.explanation || chatData.answer || "",
+            points: Array.isArray(chatData.bullets) ? chatData.bullets : []
+          });
+        }
+
+        return res.json({
+          isQuestion: true,
+          question: transcript,
+          confidence: 1.0,
+          type: questionType,
+          difficulty,
+          sections,
+          code: chatData.code || "",
+          codeLanguage: chatData.codeLanguage || chatData.language || "",
+          bullets: [],
+          spoken: chatData.spoken || "",
+        });
+
+        // ════════════════════════════════════════════════════════════════
+        // VOICE MODE — Low Latency, High Signal Density
+        // ════════════════════════════════════════════════════════════════
+      } else {
+        const voiceSystemPrompt = `You are an AI assistant helping a candidate during a live interview.
+Analyze the transcript and determine if the interviewer asked a question.
+
+Return ONLY valid JSON. No markdown. No extra text.
+
+JSON FORMAT:
 {
   "isQuestion": boolean,
-  "question": "the detected question",
+  "question": "Detected question or empty string",
   "confidence": 0.0-1.0,
-  "type": "behavioral/technical",
-  "bullets": ["Bullet 1: Action-oriented", "Bullet 2: Technical detail", "Bullet 3: Result/Impact"],
-  "spoken": "punchy 1-2 sentence response"
+  "type": "technical | behavioral | general",
+  "bullets": [
+    "Short talking point (max 10 words)",
+    "Short talking point (max 10 words)",
+    "Short talking point (max 10 words)",
+    "Short talking point (max 10 words)"
+  ],
+  "spoken": "1-2 sentence confident answer the user could say aloud."
 }
-Only output valid JSON.`;
 
-      if (resume) {
-        systemPrompt += `\n\nUSER RESUME CONTEXT:\n${resume}`;
+DETECTION RULES:
+- If transcript contains a question: isQuestion = true, extract the main question
+- If no question detected: isQuestion = false, return empty bullets array
+
+BULLET STYLE — TECHNICAL QUESTIONS:
+Include keyword-dense talking points with:
+• Algorithm or pattern name
+• Big-O complexity (e.g. O(n log n))
+• Key trade-offs
+• Production/edge case consideration
+Examples: "HashMap lookup O(1) average case" | "Avoid nested loops, use sorting O(n log n)" | "Handle null and empty input edge cases"
+
+BULLET STYLE — BEHAVIORAL QUESTIONS (STAR method):
+• Situation: what was the context?
+• Task: what was your responsibility?
+• Action: what did you specifically do?
+• Result: measurable outcome
+Examples: "Legacy API slowed under heavy traffic" | "Led async processing refactor" | "Reduced latency by 60%" | "Improved reliability 99.9% uptime"
+
+SPOKEN FIELD: A confident, complete 1-2 sentence answer the user can say out loud immediately.
+
+CONTEXT:
+Resume: ${resume || 'Not provided'}
+Job Description: ${jd || 'Not provided'}
+Persona: ${persona}
+${persona === 'Technical Interviewer' ? '\nFocus on engineering depth, Big-O complexity, and edge cases.' : ''}
+${persona === 'Executive Assistant' ? '\nFocus on business impact, decision making, and strategy.' : ''}
+${persona === 'Language Translator' ? '\nTranslate accurately while maintaining tone and cultural context.' : ''}
+
+Return ONLY JSON.`;
+
+        const voiceCompletion = await groq.chat.completions.create({
+          messages: [
+            { role: "system", content: voiceSystemPrompt },
+            { role: "user", content: `Transcript: "${transcript}"` }
+          ],
+          model: customModel || "llama-3.1-8b-instant",
+          response_format: { type: "json_object" },
+          temperature: 0.3, // Low temperature = fast, accurate, deterministic
+        });
+
+        let voiceData: any = { isQuestion: false };
+        try {
+          voiceData = JSON.parse(voiceCompletion.choices[0]?.message?.content || "{}");
+        } catch {
+          voiceData = { isQuestion: false };
+        }
+        return res.json(voiceData);
       }
-      if (jd) {
-        systemPrompt += `\n\nJOB DESCRIPTION CONTEXT:\n${jd}`;
-      }
 
-      if (persona === 'Technical Interviewer') {
-        systemPrompt += `\n\nFocus on glanceable technical talking points, Big O complexity, and edge cases. Keep bullets extremely punchy so the user can expand on them naturally.`;
-      } else if (persona === 'Executive Assistant') {
-        systemPrompt += `\n\nFocus on summarizing action items, key decisions, and high-level strategy.`;
-      } else if (persona === 'Language Translator') {
-        systemPrompt += `\n\nFocus on translating the dialogue accurately while maintaining tone.`;
-      }
-
-      const completion = await groq.chat.completions.create({
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt
-          },
-          {
-            role: "user",
-            content: `Transcript: "${transcript}"`
-          }
-        ],
-        model: customModel || "llama-3.1-8b-instant",
-        response_format: { type: "json_object" },
-      });
-
-      const content = completion.choices[0]?.message?.content || "{}";
-      res.json(JSON.parse(content));
     } catch (error: any) {
       console.error("Analysis error:", error);
       res.status(500).json({ error: error.message || "Analysis failed" });
     }
   });
+
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Mic, X, Settings, Sparkles, Zap, Activity, ChevronRight, Minimize2, Maximize2, Pin, PinOff, History, Download, Eye, EyeOff, Keyboard } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Mic, X, Settings, Sparkles, Zap, Activity, Minimize2, Maximize2, Pin, PinOff, History, Download, EyeOff, Keyboard, MessageSquare, Send } from 'lucide-react';
 import { useTabAudioCapture } from '../hooks/useTabAudioCapture';
 import { useAIAssistant } from '../hooks/useAIAssistant';
 import { Visualizer } from './Visualizer';
@@ -13,10 +13,20 @@ export function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
 }
 
+interface Section {
+  title: string;
+  content: string;
+  points?: string[];
+}
+
 interface HistoryItem {
   id: string;
   question: string;
   answer: string[];
+  sections?: Section[];
+  explanation?: string;
+  code?: string;
+  codeLanguage?: string;
   timestamp: number;
 }
 
@@ -35,17 +45,47 @@ export default function OverlayWidget() {
     toggleHide: 'CommandOrControl+Shift+H',
     toggleClickThrough: 'CommandOrControl+Shift+X'
   });
-  
+
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedOutputDevice, setSelectedOutputDevice] = useState('');
   const [enableTTS, setEnableTTS] = useState(false);
-  
+
   const [apiKey, setApiKey] = useState('');
   const [voiceModel, setVoiceModel] = useState('whisper-large-v3-turbo');
   const [model, setModel] = useState('llama-3.3-70b-versatile');
-  
-  const { detectedQuestion, answer, isProcessing, processTranscript, resetAssistant } = useAIAssistant();
+
+  const [activeTab, setActiveTab] = useState<'voice' | 'chat'>('voice');
+  const [chatInput, setChatInput] = useState('');
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+
+  const { detectedQuestion, answer, isProcessing, processTranscript, askQuestion, resetAssistant } = useAIAssistant();
   const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript);
+
+  const handleChatSubmit = async () => {
+    const q = chatInput.trim();
+    if (!q || isProcessing) return;
+    setChatInput('');
+    // Re-enter click-through mode after submitting — cursor stays on the other app
+    ipc?.send('chat-input-blurred');
+    chatInputRef.current?.blur();
+    await askQuestion(q);
+  };
+
+
+  // ── Stealth hotkey: Ctrl+Shift+Space from Electron focuses chat input ──
+  // When triggered, no mouse movement happens — purely keyboard-driven.
+  useEffect(() => {
+    if (!ipc) return;
+    const handler = () => {
+      setActiveTab('chat');
+      // Small delay so tab switch renders before focus
+      setTimeout(() => {
+        chatInputRef.current?.focus();
+      }, 60);
+    };
+    ipc.on('focus-chat-input', handler);
+    return () => ipc.removeListener('focus-chat-input', handler);
+  }, []);
 
   // Track the last question we added to history to prevent duplicates
   const lastProcessedQuestionRef = React.useRef<string | null>(null);
@@ -53,32 +93,32 @@ export default function OverlayWidget() {
   // Save to history when a new answer is complete
   useEffect(() => {
     if (detectedQuestion && answer) {
-      // Create a unique key for this specific question-answer pair
-      const questionKey = `${detectedQuestion.question}_${answer.bullets.join('|')}`;
-      
+      const questionKey = `${detectedQuestion.question}_${answer.bullets.join('|')}_${answer.explanation?.slice(0, 30)}`;
       if (lastProcessedQuestionRef.current === questionKey) return;
-      
+
       const newItem: HistoryItem = {
         id: Math.random().toString(36).substr(2, 9),
         question: detectedQuestion.question,
         answer: answer.bullets,
+        sections: (answer as any).sections || [],
+        explanation: answer.explanation,
+        code: answer.code,
+        codeLanguage: answer.codeLanguage,
         timestamp: Date.now()
       };
-      
+
       setHistory(prev => {
-        // Double check for duplicates in the list
         if (prev.length > 0 && prev[0].question === newItem.question && JSON.stringify(prev[0].answer) === JSON.stringify(newItem.answer)) {
           return prev;
         }
         return [newItem, ...prev].slice(0, 50);
       });
-      
+
       lastProcessedQuestionRef.current = questionKey;
-      
-      // Clear transcript after detection
       clearTranscript();
     }
   }, [detectedQuestion, answer, clearTranscript]);
+
 
   useEffect(() => {
     const savedKey = localStorage.getItem('groq_api_key');
@@ -91,7 +131,7 @@ export default function OverlayWidget() {
     const savedHotkeys = localStorage.getItem('aura_hotkeys');
     const savedOutputDevice = localStorage.getItem('aura_output_device');
     const savedEnableTTS = localStorage.getItem('aura_enable_tts') === 'true';
-    
+
     if (savedKey) setApiKey(savedKey);
     if (savedVoiceModel) setVoiceModel(savedVoiceModel);
     if (savedModel) setModel(savedModel);
@@ -126,18 +166,6 @@ export default function OverlayWidget() {
     }
   }, [showSettings]);
 
-  // Add to history when answer is received
-  useEffect(() => {
-    if (detectedQuestion && answer) {
-      const newItem: HistoryItem = {
-        id: Math.random().toString(36).substring(7),
-        question: detectedQuestion.question,
-        answer: answer.bullets,
-        timestamp: Date.now()
-      };
-      setHistory(prev => [newItem, ...prev].slice(0, 50)); // Keep last 50
-    }
-  }, [detectedQuestion, answer]);
 
   const saveSettings = () => {
     localStorage.setItem('groq_api_key', apiKey);
@@ -150,11 +178,11 @@ export default function OverlayWidget() {
     localStorage.setItem('aura_hotkeys', JSON.stringify(hotkeys));
     localStorage.setItem('aura_output_device', selectedOutputDevice);
     localStorage.setItem('aura_enable_tts', enableTTS.toString());
-    
+
     if (ipc) {
       ipc.send('update-hotkeys', hotkeys);
     }
-    
+
     setShowSettings(false);
   };
 
@@ -184,7 +212,7 @@ export default function OverlayWidget() {
     const text = history.map(item => {
       return `Q: ${item.question}\nA: ${item.answer.join('\n')}\n[${new Date(item.timestamp).toLocaleTimeString()}]\n${'-'.repeat(20)}`;
     }).join('\n\n');
-    
+
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -197,7 +225,7 @@ export default function OverlayWidget() {
   };
 
   return (
-    <div 
+    <div
       className={cn(
         "p-2 flex flex-col font-sans relative group transition-all duration-500 ease-in-out",
         isHidden ? "h-14 w-14" : isMiniMode ? "h-[180px] w-[350px]" : "h-full w-full"
@@ -205,7 +233,7 @@ export default function OverlayWidget() {
       style={{ opacity: opacity / 100 }}
     >
       {isHidden ? (
-        <button 
+        <button
           onClick={() => setIsHidden(false)}
           className="w-12 h-12 rounded-full bg-[#0a0a0a]/90 backdrop-blur-xl border border-white/10 flex items-center justify-center shadow-[0_0_20px_rgba(34,211,238,0.3)] hover:scale-110 transition-transform group/btn"
           title="Show AuraScribe (Ctrl+Shift+H)"
@@ -216,7 +244,7 @@ export default function OverlayWidget() {
         </button>
       ) : (
         <div className="flex-1 bg-[#0a0a0a]/90 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden text-slate-200 relative">
-          
+
           {/* Header (Draggable via Electron) */}
           <div className="drag-region h-12 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] shrink-0">
             <div className="flex items-center gap-2.5">
@@ -226,7 +254,7 @@ export default function OverlayWidget() {
               <span className="font-semibold text-sm tracking-wide text-white/90">AuraScribe</span>
             </div>
             <div className="flex gap-2 no-drag items-center">
-              <button 
+              <button
                 onClick={() => setIsHidden(true)}
                 title="Hide to Bubble (Ctrl+Shift+H)"
                 className="p-1.5 hover:bg-white/5 rounded-md transition-colors text-slate-400 hover:text-white"
@@ -234,435 +262,657 @@ export default function OverlayWidget() {
                 <EyeOff size={14} />
               </button>
 
-              <button 
+              <button
                 onClick={() => setShowHistory(!showHistory)}
-              title="Session History"
-              className={cn("p-1.5 hover:bg-white/5 rounded-md transition-colors", showHistory && "text-cyan-400")}
-            >
-              <History size={14} />
-            </button>
-            
-            <button 
-              onClick={toggleAlwaysOnTop}
-              title={isAlwaysOnTop ? "Disable Always on Top" : "Enable Always on Top"}
-              className="p-1.5 hover:bg-white/5 rounded-md transition-colors"
-            >
-              {isAlwaysOnTop ? <Pin size={14} className="text-cyan-400" /> : <PinOff size={14} className="text-slate-400" />}
-            </button>
+                title="Session History"
+                className={cn("p-1.5 hover:bg-white/5 rounded-md transition-colors", showHistory && "text-cyan-400")}
+              >
+                <History size={14} />
+              </button>
 
-            <button 
-              onClick={() => setIsMiniMode(!isMiniMode)}
-              title={isMiniMode ? "Exit Mini Mode" : "Enter Mini Mode"}
-              className="p-1.5 hover:bg-white/5 rounded-md transition-colors"
-            >
-              {isMiniMode ? <Maximize2 size={14} className="text-slate-400" /> : <Minimize2 size={14} className="text-slate-400" />}
-            </button>
+              <button
+                onClick={toggleAlwaysOnTop}
+                title={isAlwaysOnTop ? "Disable Always on Top" : "Enable Always on Top"}
+                className="p-1.5 hover:bg-white/5 rounded-md transition-colors"
+              >
+                {isAlwaysOnTop ? <Pin size={14} className="text-cyan-400" /> : <PinOff size={14} className="text-slate-400" />}
+              </button>
 
-            <Settings 
-              size={14} 
-              className={cn("cursor-pointer transition-colors p-0.5", showSettings ? "text-cyan-400" : "text-slate-400 hover:text-white")} 
-              onClick={() => setShowSettings(!showSettings)} 
-            />
-            <X size={16} className="text-slate-400 hover:text-white cursor-pointer transition-colors" onClick={() => window.close()} />
-          </div>
-        </div>
+              <button
+                onClick={() => setIsMiniMode(!isMiniMode)}
+                title={isMiniMode ? "Exit Mini Mode" : "Enter Mini Mode"}
+                className="p-1.5 hover:bg-white/5 rounded-md transition-colors"
+              >
+                {isMiniMode ? <Maximize2 size={14} className="text-slate-400" /> : <Minimize2 size={14} className="text-slate-400" />}
+              </button>
 
-        {/* Content Area */}
-        <div className="flex-1 flex flex-col overflow-hidden relative">
-          
-          {/* History Overlay */}
-          {showHistory && (
-            <div className="absolute inset-0 z-50 bg-[#0a0a0a] flex flex-col no-drag">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
-                <h2 className="text-sm font-bold text-white tracking-wide">Session History</h2>
-                <div className="flex gap-3">
-                  <button 
-                    onClick={() => setHistory([])} 
-                    className="text-[10px] font-bold text-red-400/70 hover:text-red-400 uppercase tracking-wider mr-2"
-                    title="Clear All History"
-                  >
-                    Clear All
-                  </button>
-                  <button onClick={exportHistory} className="text-slate-400 hover:text-white"><Download size={14} /></button>
-                  <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-white"><X size={14} /></button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                {history.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
-                    <History size={32} className="mb-2" />
-                    <p className="text-xs">No history yet</p>
-                  </div>
-                ) : (
-                  history.map(item => (
-                    <div key={item.id} className="space-y-2">
-                      <div className="text-[10px] text-slate-500 font-mono">{new Date(item.timestamp).toLocaleTimeString()}</div>
-                      <div className="text-xs font-bold text-white">{item.question}</div>
-                      <div className="text-xs text-slate-400 space-y-1">
-                        {item.answer.map((b, i) => <div key={i}>• {b}</div>)}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
+              <Settings
+                size={14}
+                className={cn("cursor-pointer transition-colors p-0.5", showSettings ? "text-cyan-400" : "text-slate-400 hover:text-white")}
+                onClick={() => setShowSettings(!showSettings)}
+              />
+              <X size={16} className="text-slate-400 hover:text-white cursor-pointer transition-colors" onClick={() => window.close()} />
             </div>
-          )}
+          </div>
 
-          {/* Settings Overlay */}
-          {showSettings ? (
-            <div className="absolute inset-0 z-50 bg-[#0a0a0a] flex flex-col no-drag">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
-                <h2 className="text-sm font-bold text-white tracking-wide">Configuration</h2>
-                <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-white"><X size={14} /></button>
+          {/* Content Area */}
+          <div className="flex-1 flex flex-col overflow-hidden relative">
+
+            {/* History Overlay */}
+            {showHistory && (
+              <div className="absolute inset-0 z-50 bg-[#0a0a0a] flex flex-col no-drag">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                  <h2 className="text-sm font-bold text-white tracking-wide">Session History</h2>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setHistory([])}
+                      className="text-[10px] font-bold text-red-400/70 hover:text-red-400 uppercase tracking-wider mr-2"
+                      title="Clear All History"
+                    >
+                      Clear All
+                    </button>
+                    <button onClick={exportHistory} className="text-slate-400 hover:text-white"><Download size={14} /></button>
+                    <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-white"><X size={14} /></button>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-5 space-y-6">
+                  {history.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
+                      <History size={32} className="mb-2" />
+                      <p className="text-xs">No history yet</p>
+                    </div>
+                  ) : (
+                    history.map(item => (
+                      <div key={item.id} className="space-y-2">
+                        <div className="text-[10px] text-slate-500 font-mono">{new Date(item.timestamp).toLocaleTimeString()}</div>
+                        <div className="text-xs font-bold text-white">{item.question}</div>
+                        <div className="text-xs text-slate-400 space-y-1">
+                          {item.answer.map((b, i) => <div key={i}>• {b}</div>)}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
-              
-              <div className="p-5 flex flex-col gap-5 overflow-y-auto scrollbar-hide">
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400">Groq API Key</label>
-                  <input 
-                    type="password" 
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="gsk_..."
-                    className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors"
-                  />
+            )}
+
+            {/* Settings Overlay */}
+            {showSettings ? (
+              <div className="absolute inset-0 z-50 bg-[#0a0a0a] flex flex-col no-drag">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                  <h2 className="text-sm font-bold text-white tracking-wide">Configuration</h2>
+                  <button onClick={() => setShowSettings(false)} className="text-slate-400 hover:text-white"><X size={14} /></button>
                 </div>
 
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400">Meeting Persona</label>
-                  <select 
-                    value={persona}
-                    onChange={(e) => setPersona(e.target.value)}
-                    className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
-                  >
-                    <option value="Technical Interviewer">Technical Interviewer</option>
-                    <option value="Executive Assistant">Executive Assistant</option>
-                    <option value="Language Translator">Language Translator</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400">Your Resume (Context)</label>
-                  <textarea 
-                    value={resume}
-                    onChange={(e) => setResume(e.target.value)}
-                    placeholder="Paste your resume text here for personalized answers..."
-                    className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors h-24 resize-none scrollbar-hide"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400">Job Description (JD)</label>
-                  <textarea 
-                    value={jd}
-                    onChange={(e) => setJd(e.target.value)}
-                    placeholder="Paste the job description here..."
-                    className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors h-24 resize-none scrollbar-hide"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-medium text-slate-400">Stealth Mode (Opacity)</label>
-                    <span className="text-[10px] text-cyan-400 font-mono">{opacity}%</span>
+                <div className="p-5 flex flex-col gap-5 overflow-y-auto scrollbar-hide">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium text-slate-400">Groq API Key</label>
+                    <input
+                      type="password"
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      placeholder="gsk_..."
+                      className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors"
+                    />
                   </div>
-                  <input 
-                    type="range" 
-                    min="10" 
-                    max="100" 
-                    value={opacity}
-                    onChange={(e) => setOpacity(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
-                  />
-                </div>
 
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400 flex items-center gap-2"><Keyboard size={12} /> Global Hotkeys</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[9px] text-slate-500 uppercase">Hide/Show</span>
-                      <input 
-                        value={hotkeys.toggleHide}
-                        onChange={(e) => setHotkeys({...hotkeys, toggleHide: e.target.value})}
-                        className="bg-black/50 border border-white/10 rounded-md px-2 py-1.5 text-[10px] text-white"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <span className="text-[9px] text-slate-500 uppercase">Click-Through</span>
-                      <input 
-                        value={hotkeys.toggleClickThrough}
-                        onChange={(e) => setHotkeys({...hotkeys, toggleClickThrough: e.target.value})}
-                        className="bg-black/50 border border-white/10 rounded-md px-2 py-1.5 text-[10px] text-white"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400">Intelligence Model</label>
-                  <select 
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
-                  >
-                    <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Recommended)</option>
-                    <option value="llama-3.1-8b-instant">Llama 3.1 8B (Super Fast)</option>
-                    <option value="deepseek-r1-distill-llama-70b">DeepSeek R1 Distill 70B</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs font-medium text-slate-400">Voice Model (STT)</label>
-                  <select 
-                    value={voiceModel}
-                    onChange={(e) => setVoiceModel(e.target.value)}
-                    className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
-                  >
-                    <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo (Recommended)</option>
-                    <option value="whisper-large-v3">Whisper Large V3</option>
-                    <option value="distil-whisper-large-v3-en">Distil Whisper V3 (English Only)</option>
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-medium text-slate-400">Audio Output (TTS)</label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 uppercase">{enableTTS ? 'On' : 'Off'}</span>
-                      <button 
-                        onClick={() => setEnableTTS(!enableTTS)}
-                        className={cn(
-                          "w-8 h-4 rounded-full relative transition-colors",
-                          enableTTS ? "bg-cyan-500" : "bg-slate-700"
-                        )}
-                      >
-                        <div className={cn(
-                          "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all",
-                          enableTTS ? "left-4.5" : "left-0.5"
-                        )} />
-                      </button>
-                    </div>
-                  </div>
-                  {enableTTS && (
-                    <select 
-                      value={selectedOutputDevice}
-                      onChange={(e) => setSelectedOutputDevice(e.target.value)}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium text-slate-400">Meeting Persona</label>
+                    <select
+                      value={persona}
+                      onChange={(e) => setPersona(e.target.value)}
                       className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
                     >
-                      <option value="">Default Output</option>
-                      {audioDevices.map(device => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.label || `Output ${device.deviceId.slice(0, 5)}...`}
-                        </option>
-                      ))}
+                      <option value="Technical Interviewer">Technical Interviewer</option>
+                      <option value="Executive Assistant">Executive Assistant</option>
+                      <option value="Language Translator">Language Translator</option>
                     </select>
-                  )}
-                </div>
-
-                <button 
-                  onClick={saveSettings}
-                  className="mt-2 bg-white text-black hover:bg-slate-200 py-2.5 rounded-lg text-sm font-bold transition-colors shadow-[0_0_15px_rgba(255,255,255,0.15)]"
-                >
-                  Save Changes
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* Status Bar */}
-              <div className="px-5 py-3 border-b border-white/5 bg-black/20 flex justify-between items-center no-drag shrink-0">
-                <div className="flex items-center gap-3">
-                  {isRateLimited ? (
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                    </span>
-                  ) : isListening ? (
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                    </span>
-                  ) : (
-                    <div className="h-2 w-2 rounded-full bg-slate-600" />
-                  )}
-                  <div className="flex flex-col">
-                    <span className="text-xs font-medium text-slate-400">
-                      {isRateLimited ? (
-                        <span className="text-amber-400 animate-pulse">Rate Limited...</span>
-                      ) : (
-                        isListening ? 'Listening...' : 'Ready'
-                      )}
-                    </span>
-                    <span className="text-[8px] text-slate-600 uppercase tracking-tighter">{persona}</span>
                   </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={handleClear}
-                    className="text-[10px] font-bold text-slate-500 hover:text-white transition-colors uppercase tracking-wider"
-                  >
-                    Clear
-                  </button>
-                  <button
-                    onClick={toggleListen}
-                    className={cn(
-                      "px-4 py-1.5 rounded-full text-xs font-bold transition-all duration-300",
-                      isListening
-                        ? "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
-                        : "bg-white text-black hover:bg-slate-200 shadow-[0_0_15px_rgba(255,255,255,0.15)]"
-                    )}
-                  >
-                    {isListening ? 'Stop' : 'Start'}
-                  </button>
-                </div>
-              </div>
 
-              {isMiniMode ? (
-                /* Mini Mode Content */
-                <div className="flex-1 p-4 flex flex-col gap-2 overflow-hidden bg-gradient-to-b from-indigo-900/10 to-transparent">
-                  {detectedQuestion ? (
-                    <div className="flex flex-col gap-2">
-                      <div className="text-xs font-medium text-white leading-snug border-l-2 border-cyan-500 pl-2 line-clamp-2">
-                        {detectedQuestion.question}
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium text-slate-400">Your Resume (Context)</label>
+                    <textarea
+                      value={resume}
+                      onChange={(e) => setResume(e.target.value)}
+                      placeholder="Paste your resume text here for personalized answers..."
+                      className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors h-24 resize-none scrollbar-hide"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium text-slate-400">Job Description (JD)</label>
+                    <textarea
+                      value={jd}
+                      onChange={(e) => setJd(e.target.value)}
+                      placeholder="Paste the job description here..."
+                      className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors h-24 resize-none scrollbar-hide"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-medium text-slate-400">Stealth Mode (Opacity)</label>
+                      <span className="text-[10px] text-cyan-400 font-mono">{opacity}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      value={opacity}
+                      onChange={(e) => setOpacity(parseInt(e.target.value))}
+                      className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium text-slate-400 flex items-center gap-2"><Keyboard size={12} /> Global Hotkeys</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 uppercase">Hide/Show</span>
+                        <input
+                          value={hotkeys.toggleHide}
+                          onChange={(e) => setHotkeys({ ...hotkeys, toggleHide: e.target.value })}
+                          className="bg-black/50 border border-white/10 rounded-md px-2 py-1.5 text-[10px] text-white"
+                        />
                       </div>
-                      {answer && (
-                        <div className="text-[11px] text-slate-300 line-clamp-3 bg-white/[0.03] p-2 rounded-lg border border-white/[0.05]">
-                          {answer.bullets[0]}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center opacity-30 gap-2">
-                      <Visualizer stream={stream} isListening={isListening} />
-                      <Sparkles size={20} className="text-slate-500" />
-                    </div>
-                  )}
-                </div>
-              ) : (
-                /* Full Mode Content */
-                <>
-                  {/* Transcript Area (Top Half) */}
-                  <div className="flex-[0.8] p-5 flex flex-col gap-3 overflow-hidden border-b border-white/5 no-drag bg-white/[0.01] relative">
-                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center justify-between">
-                      <div className="flex items-center gap-2"><Mic size={10} /> Live Transcript</div>
-                      {isListening && <div className="w-24 h-4"><Visualizer stream={stream} isListening={isListening} /></div>}
-                    </div>
-                    <div className="flex-1 overflow-y-auto text-sm text-slate-300 font-mono leading-relaxed pr-2 mask-fade-out">
-                      {transcript ? (
-                        <span>{transcript}</span>
-                      ) : (
-                        <span className="italic text-slate-600">Waiting for speech...</span>
-                      )}
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[9px] text-slate-500 uppercase">Click-Through</span>
+                        <input
+                          value={hotkeys.toggleClickThrough}
+                          onChange={(e) => setHotkeys({ ...hotkeys, toggleClickThrough: e.target.value })}
+                          className="bg-black/50 border border-white/10 rounded-md px-2 py-1.5 text-[10px] text-white"
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  {/* AI Copilot Area (Bottom Half) */}
-                  <div className="flex-[1.2] p-5 bg-gradient-to-b from-indigo-900/10 to-transparent flex flex-col gap-4 overflow-y-auto no-drag">
-                    <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest flex items-center justify-between gap-2">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium text-slate-400">Intelligence Model</label>
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
+                    >
+                      <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Recommended)</option>
+                      <option value="llama-3.1-8b-instant">Llama 3.1 8B (Super Fast)</option>
+                      <option value="deepseek-r1-distill-llama-70b">DeepSeek R1 Distill 70B</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs font-medium text-slate-400">Voice Model (STT)</label>
+                    <select
+                      value={voiceModel}
+                      onChange={(e) => setVoiceModel(e.target.value)}
+                      className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
+                    >
+                      <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo (Recommended)</option>
+                      <option value="whisper-large-v3">Whisper Large V3</option>
+                      <option value="distil-whisper-large-v3-en">Distil Whisper V3 (English Only)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-medium text-slate-400">Audio Output (TTS)</label>
                       <div className="flex items-center gap-2">
-                        <Zap size={10} className={cn(isProcessing ? "text-cyan-400 animate-pulse" : "text-cyan-400")} /> 
-                        AI Copilot
-                        {isProcessing && (
-                          <div className="flex items-center gap-1.5 ml-2">
-                            <span className="flex h-1.5 w-1.5 relative">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+                        <span className="text-[10px] text-slate-500 uppercase">{enableTTS ? 'On' : 'Off'}</span>
+                        <button
+                          onClick={() => setEnableTTS(!enableTTS)}
+                          className={cn(
+                            "w-8 h-4 rounded-full relative transition-colors",
+                            enableTTS ? "bg-cyan-500" : "bg-slate-700"
+                          )}
+                        >
+                          <div className={cn(
+                            "absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all",
+                            enableTTS ? "left-4.5" : "left-0.5"
+                          )} />
+                        </button>
+                      </div>
+                    </div>
+                    {enableTTS && (
+                      <select
+                        value={selectedOutputDevice}
+                        onChange={(e) => setSelectedOutputDevice(e.target.value)}
+                        className="bg-black/50 border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-cyan-500 transition-colors appearance-none"
+                      >
+                        <option value="">Default Output</option>
+                        {audioDevices.map(device => (
+                          <option key={device.deviceId} value={device.deviceId}>
+                            {device.label || `Output ${device.deviceId.slice(0, 5)}...`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={saveSettings}
+                    className="mt-2 bg-white text-black hover:bg-slate-200 py-2.5 rounded-lg text-sm font-bold transition-colors shadow-[0_0_15px_rgba(255,255,255,0.15)]"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Tab Bar */}
+                <div className="px-4 pt-2 border-b border-white/5 bg-black/20 flex items-center justify-between no-drag shrink-0">
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setActiveTab('voice')}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[11px] font-bold uppercase tracking-wider transition-all border-b-2",
+                        activeTab === 'voice'
+                          ? "text-white border-cyan-400 bg-white/[0.04]"
+                          : "text-slate-500 border-transparent hover:text-slate-300"
+                      )}
+                    >
+                      <Mic size={10} /> Voice
+                    </button>
+                    <button
+                      onClick={() => setActiveTab('chat')}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[11px] font-bold uppercase tracking-wider transition-all border-b-2",
+                        activeTab === 'chat'
+                          ? "text-white border-cyan-400 bg-white/[0.04]"
+                          : "text-slate-500 border-transparent hover:text-slate-300"
+                      )}
+                    >
+                      <MessageSquare size={10} /> Chat
+                    </button>
+                  </div>
+
+                  {/* Right-side controls — only show voice controls on voice tab */}
+                  <div className="flex items-center gap-3 pb-1">
+                    {activeTab === 'voice' ? (
+                      <>
+                        <div className="flex items-center gap-2">
+                          {isRateLimited ? (
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                             </span>
-                            <span className="animate-pulse text-cyan-300/70 text-[9px] font-medium normal-case tracking-normal">Aura is thinking...</span>
+                          ) : isListening ? (
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                            </span>
+                          ) : (
+                            <div className="h-2 w-2 rounded-full bg-slate-600" />
+                          )}
+                          <span className="text-[10px] text-slate-500">
+                            {isRateLimited ? (
+                              <span className="text-amber-400 animate-pulse">Rate Limited</span>
+                            ) : isListening ? 'Live' : 'Idle'}
+                          </span>
+                        </div>
+                        <button
+                          onClick={handleClear}
+                          className="text-[10px] font-bold text-slate-500 hover:text-white transition-colors uppercase tracking-wider"
+                        >
+                          Clear
+                        </button>
+                        <button
+                          onClick={toggleListen}
+                          className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-bold transition-all duration-300",
+                            isListening
+                              ? "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
+                              : "bg-white text-black hover:bg-slate-200 shadow-[0_0_15px_rgba(255,255,255,0.15)]"
+                          )}
+                        >
+                          {isListening ? 'Stop' : 'Start'}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={handleClear}
+                        className="text-[10px] font-bold text-slate-500 hover:text-white transition-colors uppercase tracking-wider pb-0.5"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {isMiniMode ? (
+                  /* Mini Mode Content */
+                  <div className="flex-1 p-4 flex flex-col gap-2 overflow-hidden bg-gradient-to-b from-indigo-900/10 to-transparent">
+                    {detectedQuestion ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="text-xs font-medium text-white leading-snug border-l-2 border-cyan-500 pl-2 line-clamp-2">
+                          {detectedQuestion.question}
+                        </div>
+                        {answer && (
+                          <div className="text-[11px] text-slate-300 line-clamp-3 bg-white/[0.03] p-2 rounded-lg border border-white/[0.05]">
+                            {answer.bullets[0]}
                           </div>
                         )}
                       </div>
-                      {answer && (
-                        <button 
-                          onClick={() => navigator.clipboard.writeText(answer.bullets.join('\n'))}
-                          className="text-[9px] hover:text-white transition-colors"
-                        >
-                          Copy
-                        </button>
-                      )}
-                    </div>
-                    
-                    {isProcessing && !answer && (
-                      <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        <div className="text-sm font-medium text-white/50 leading-snug border-l-2 border-cyan-500/30 pl-3 italic">
-                          "{transcript.slice(-100)}..."
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-cyan-400/70 mt-2">
-                          <div className="h-3.5 w-3.5 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin"></div>
-                          Aura is analyzing...
-                        </div>
-                      </div>
-                    )}
-
-                    {history.length > 0 ? (
-                      <div className="flex flex-col gap-8">
-                        {history.map((item, index) => (
-                          <div key={item.id} className={cn(
-                            "flex flex-col gap-3 transition-all duration-500 relative",
-                            index === 0 ? "opacity-100 scale-100" : "opacity-40 scale-[0.97] hover:opacity-100 hover:scale-100"
-                          )}>
-                            {index === 0 && (
-                              <div className="absolute -left-5 top-0 bottom-0 w-1 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(34,211,238,0.5)]" />
-                            )}
-                            
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="text-[10px] font-bold text-cyan-500/50 uppercase tracking-widest">
-                                {index === 0 ? "Active Response" : `Previous (${new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`}
-                              </div>
-                            </div>
-
-                            <div className={cn(
-                              "text-sm font-semibold leading-snug pl-1",
-                              index === 0 ? "text-white" : "text-slate-400"
-                            )}>
-                              {item.question}
-                            </div>
-                            
-                            <div className="flex flex-col gap-2">
-                              {item.answer.map((bullet, i) => (
-                                <div key={i} className={cn(
-                                  "flex items-start gap-3 rounded-xl p-3 transition-all border",
-                                  index === 0 
-                                    ? "bg-cyan-500/5 border-cyan-500/20 shadow-[0_0_20px_rgba(34,211,238,0.05)]" 
-                                    : "bg-white/[0.02] border-white/[0.05]"
-                                )}>
-                                  <div className={cn(
-                                    "w-1.5 h-1.5 rounded-full mt-1.5 shrink-0",
-                                    index === 0 ? "bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]" : "bg-slate-600"
-                                  )} />
-                                  <span className={cn(
-                                    "text-sm leading-relaxed",
-                                    index === 0 ? "text-slate-100" : "text-slate-400"
-                                  )}>{bullet}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : !isProcessing && (
-                      <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3 opacity-50 py-10">
-                        <Activity size={24} className={isListening ? "animate-pulse" : ""} />
-                        <span className="text-xs font-medium text-center px-10">
-                          {isListening 
-                            ? `Listening for ${persona.toLowerCase()} context...` 
-                            : "Start listening to begin analysis"}
-                        </span>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center opacity-30 gap-2">
+                        <Visualizer stream={stream} isListening={isListening} />
+                        <Sparkles size={20} className="text-slate-500" />
                       </div>
                     )}
                   </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    )}
+                ) : activeTab === 'chat' ? (
+                  /* ── CHAT TAB ── */
+                  <div className="flex-1 flex flex-col overflow-hidden">
+                    {/* Chat answers area */}
+                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-10 no-drag">
+                      {isProcessing && !answer && (
+                        <div className="flex items-center gap-3 text-sm text-cyan-400/70 animate-pulse pt-4">
+                          <div className="h-4 w-4 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin shrink-0"></div>
+                          Aura is thinking deeply...
+                        </div>
+                      )}
 
-    {!isHidden && (
+                      {history.length > 0 ? (
+                        history.map((item, index) => {
+                          // Normalise: prefer sections[], fall back to legacy explanation
+                          const sections: Section[] = (item.sections && item.sections.length > 0)
+                            ? item.sections
+                            : item.explanation
+                              ? [{ title: 'Answer', content: item.explanation, points: item.answer }]
+                              : [];
+
+                          return (
+                            <div key={item.id} className={cn(
+                              "flex flex-col gap-4 transition-all duration-500 relative",
+                              index === 0 ? "opacity-100" : "opacity-30 hover:opacity-70"
+                            )}>
+                              {index === 0 && (
+                                <div className="absolute -left-4 top-0 bottom-0 w-0.5 bg-gradient-to-b from-cyan-500 to-transparent rounded-full" />
+                              )}
+
+                              {/* Timestamp */}
+                              <div className="text-[10px] font-bold text-cyan-500/40 uppercase tracking-widest">
+                                {index === 0 ? 'Latest Answer' : `Earlier (${new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`}
+                              </div>
+
+                              {/* Question bubble */}
+                              <div className="self-end max-w-[88%] bg-indigo-600/25 border border-indigo-500/30 rounded-2xl rounded-tr-sm px-4 py-3">
+                                <p className={cn("text-sm leading-snug font-medium", index === 0 ? "text-white" : "text-slate-400")}>{item.question}</p>
+                              </div>
+
+                              {/* Structured Sections */}
+                              {sections.map((section, si) => (
+                                <div key={si} className={cn(
+                                  "rounded-xl border overflow-hidden",
+                                  index === 0 ? "border-white/8" : "border-white/[0.04]"
+                                )}>
+                                  {/* Section header */}
+                                  <div className={cn(
+                                    "px-4 py-2.5 border-b",
+                                    index === 0
+                                      ? "bg-cyan-950/60 border-cyan-500/20"
+                                      : "bg-white/[0.02] border-white/[0.04]"
+                                  )}>
+                                    <span className={cn(
+                                      "text-[11px] font-bold uppercase tracking-widest",
+                                      index === 0 ? "text-cyan-400" : "text-slate-600"
+                                    )}>{section.title}</span>
+                                  </div>
+
+                                  {/* Section body */}
+                                  <div className={cn(
+                                    "px-4 py-3 flex flex-col gap-3",
+                                    index === 0 ? "bg-slate-900/50" : "bg-white/[0.01]"
+                                  )}>
+                                    {/* Prose paragraph */}
+                                    <p className={cn(
+                                      "text-sm leading-6",
+                                      index === 0 ? "text-slate-200" : "text-slate-600"
+                                    )}>{section.content}</p>
+
+                                    {/* Key points as compact pills */}
+                                    {section.points && section.points.length > 0 && (
+                                      <div className="flex flex-col gap-1.5 pt-1">
+                                        {section.points.map((pt, pi) => (
+                                          <div key={pi} className="flex items-start gap-2">
+                                            <div className={cn(
+                                              "w-1 h-1 rounded-full mt-2 shrink-0",
+                                              index === 0 ? "bg-cyan-400" : "bg-slate-700"
+                                            )} />
+                                            <span className={cn(
+                                              "text-xs leading-5",
+                                              index === 0 ? "text-slate-400" : "text-slate-700"
+                                            )}>{pt}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+
+                              {/* Code Block — shown after sections if present */}
+                              {item.code && (
+                                <div className={cn(
+                                  "rounded-xl border overflow-hidden",
+                                  index === 0 ? "border-cyan-500/20" : "border-white/5"
+                                )}>
+                                  <div className="flex items-center justify-between px-4 py-2 bg-black/70 border-b border-white/5">
+                                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                                      {item.codeLanguage || 'code'}
+                                    </span>
+                                    <button
+                                      onClick={() => navigator.clipboard.writeText(item.code || '')}
+                                      className="text-[10px] text-slate-500 hover:text-cyan-400 transition-colors uppercase tracking-wider font-bold"
+                                    >
+                                      Copy
+                                    </button>
+                                  </div>
+                                  <pre className="p-4 overflow-x-auto bg-black/80">
+                                    <code className={cn(
+                                      "text-[12px] font-mono leading-6",
+                                      index === 0 ? "text-emerald-300" : "text-slate-700"
+                                    )}>{item.code}</code>
+                                  </pre>
+                                </div>
+                              )}
+
+                              {/* Copy full answer */}
+                              {index === 0 && sections.length > 0 && (
+                                <button
+                                  onClick={() => {
+                                    const text = sections.map(s =>
+                                      `## ${s.title}\n${s.content}${s.points?.length ? '\n' + s.points.map(p => `• ${p}`).join('\n') : ''}`
+                                    ).join('\n\n') + (item.code ? `\n\n\`\`\`${item.codeLanguage}\n${item.code}\n\`\`\`` : '');
+                                    navigator.clipboard.writeText(text);
+                                  }}
+                                  className="self-start text-[10px] text-slate-600 hover:text-cyan-400 transition-colors uppercase tracking-widest font-bold"
+                                >
+                                  Copy full answer
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })
+                      ) : !isProcessing && (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3 opacity-50 py-10">
+                          <MessageSquare size={28} />
+                          <span className="text-xs font-medium text-center px-10 leading-relaxed">
+                            Type a question to get a detailed, interview-ready answer with code examples
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+
+
+
+                    {/* Chat Input */}
+                    <div className="shrink-0 p-4 border-t border-white/5 bg-black/20 no-drag">
+                      <div className="flex items-end gap-2 bg-white/[0.04] border border-white/10 rounded-xl px-3 py-2 focus-within:border-cyan-500/50 transition-colors">
+                        <textarea
+                          ref={chatInputRef}
+                          value={chatInput}
+                          onChange={e => setChatInput(e.target.value)}
+                          onFocus={() => ipc?.send('chat-input-focused')}
+                          onBlur={() => ipc?.send('chat-input-blurred')}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault();
+                              handleChatSubmit();
+                            }
+                            // Esc to blur / re-enter click-through
+                            if (e.key === 'Escape') {
+                              ipc?.send('chat-input-blurred');
+                              chatInputRef.current?.blur();
+                            }
+                          }}
+                          placeholder="Ask anything... (Ctrl+Shift+Space to focus, Enter to send)"
+                          rows={1}
+                          className="flex-1 bg-transparent text-sm text-white placeholder-slate-600 resize-none focus:outline-none leading-relaxed max-h-32 overflow-auto scrollbar-hide"
+                          style={{ fieldSizing: 'content' } as React.CSSProperties}
+                        />
+                        <button
+                          onClick={handleChatSubmit}
+                          disabled={!chatInput.trim() || isProcessing}
+                          className={cn(
+                            "shrink-0 p-2 rounded-lg transition-all",
+                            chatInput.trim() && !isProcessing
+                              ? "bg-cyan-500 hover:bg-cyan-400 text-black shadow-[0_0_12px_rgba(34,211,238,0.4)]"
+                              : "bg-white/5 text-slate-600 cursor-not-allowed"
+                          )}
+                        >
+                          {isProcessing
+                            ? <div className="h-4 w-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                            : <Send size={14} />}
+                        </button>
+                      </div>
+                      <p className="text-[9px] text-slate-700 mt-1.5 px-1">Persona: <span className="text-slate-500">{persona}</span></p>
+                    </div>
+                  </div>
+                ) : (
+                  /* Full Mode Content */
+                  <>
+                    {/* Transcript Area (Top Half) */}
+                    <div className="flex-[0.8] p-5 flex flex-col gap-3 overflow-hidden border-b border-white/5 no-drag bg-white/[0.01] relative">
+                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center justify-between">
+                        <div className="flex items-center gap-2"><Mic size={10} /> Live Transcript</div>
+                        {isListening && <div className="w-24 h-4"><Visualizer stream={stream} isListening={isListening} /></div>}
+                      </div>
+                      <div className="flex-1 overflow-y-auto text-sm text-slate-300 font-mono leading-relaxed pr-2 mask-fade-out">
+                        {transcript ? (
+                          <span>{transcript}</span>
+                        ) : (
+                          <span className="italic text-slate-600">Waiting for speech...</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* AI Copilot Area (Bottom Half) */}
+                    <div className="flex-[1.2] p-5 bg-gradient-to-b from-indigo-900/10 to-transparent flex flex-col gap-4 overflow-y-auto no-drag">
+                      <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Zap size={10} className={cn(isProcessing ? "text-cyan-400 animate-pulse" : "text-cyan-400")} />
+                          AI Copilot
+                          {isProcessing && (
+                            <div className="flex items-center gap-1.5 ml-2">
+                              <span className="flex h-1.5 w-1.5 relative">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+                              </span>
+                              <span className="animate-pulse text-cyan-300/70 text-[9px] font-medium normal-case tracking-normal">Aura is thinking...</span>
+                            </div>
+                          )}
+                        </div>
+                        {answer && (
+                          <button
+                            onClick={() => navigator.clipboard.writeText(answer.bullets.join('\n'))}
+                            className="text-[9px] hover:text-white transition-colors"
+                          >
+                            Copy
+                          </button>
+                        )}
+                      </div>
+
+                      {isProcessing && !answer && (
+                        <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                          <div className="text-sm font-medium text-white/50 leading-snug border-l-2 border-cyan-500/30 pl-3 italic">
+                            "{transcript.slice(-100)}..."
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-cyan-400/70 mt-2">
+                            <div className="h-3.5 w-3.5 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin"></div>
+                            Aura is analyzing...
+                          </div>
+                        </div>
+                      )}
+
+                      {history.length > 0 ? (
+                        <div className="flex flex-col gap-8">
+                          {history.map((item, index) => (
+                            <div key={item.id} className={cn(
+                              "flex flex-col gap-3 transition-all duration-500 relative",
+                              index === 0 ? "opacity-100 scale-100" : "opacity-40 scale-[0.97] hover:opacity-100 hover:scale-100"
+                            )}>
+                              {index === 0 && (
+                                <div className="absolute -left-5 top-0 bottom-0 w-1 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(34,211,238,0.5)]" />
+                              )}
+
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-[10px] font-bold text-cyan-500/50 uppercase tracking-widest">
+                                  {index === 0 ? "Active Response" : `Previous (${new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`}
+                                </div>
+                              </div>
+
+                              <div className={cn(
+                                "text-sm font-semibold leading-snug pl-1",
+                                index === 0 ? "text-white" : "text-slate-400"
+                              )}>
+                                {item.question}
+                              </div>
+
+                              <div className="flex flex-col gap-2">
+                                {item.answer.map((bullet, i) => (
+                                  <div key={i} className={cn(
+                                    "flex items-start gap-3 rounded-xl p-3 transition-all border",
+                                    index === 0
+                                      ? "bg-cyan-500/5 border-cyan-500/20 shadow-[0_0_20px_rgba(34,211,238,0.05)]"
+                                      : "bg-white/[0.02] border-white/[0.05]"
+                                  )}>
+                                    <div className={cn(
+                                      "w-1.5 h-1.5 rounded-full mt-1.5 shrink-0",
+                                      index === 0 ? "bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]" : "bg-slate-600"
+                                    )} />
+                                    <span className={cn(
+                                      "text-sm leading-relaxed",
+                                      index === 0 ? "text-slate-100" : "text-slate-400"
+                                    )}>{bullet}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : !isProcessing && (
+                        <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3 opacity-50 py-10">
+                          <Activity size={24} className={isListening ? "animate-pulse" : ""} />
+                          <span className="text-xs font-medium text-center px-10">
+                            {isListening
+                              ? `Listening for ${persona.toLowerCase()} context...`
+                              : "Start listening to begin analysis"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!isHidden && (
         <div className="absolute bottom-3 right-3 pointer-events-none text-slate-500 opacity-30 group-hover:opacity-100 transition-opacity">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 0L0 12H12V0Z" fill="currentColor"/>
+            <path d="M12 0L0 12H12V0Z" fill="currentColor" />
           </svg>
         </div>
       )}
