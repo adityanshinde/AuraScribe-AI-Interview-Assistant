@@ -172,6 +172,12 @@ async function startServer() {
       const mode = req.headers['x-mode'] as string || 'voice';
       const groq = getGroq(customKey);
 
+      const supportsLogprobs = (model: string) => {
+        // Define models that are known to support logprobs or skip it completely
+        const supported = ['llama3-8b-8192'];
+        return supported.includes(model);
+      };
+
       const { transcript, resume, jd } = req.body;
       if (!transcript) {
         return res.status(400).json({ error: "No transcript provided" });
@@ -281,16 +287,22 @@ ${persona === 'Language Translator' ? '- Emphasize language nuance, cultural con
 FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JSON.`;
 
         // ── STEP 3: Generate Answer ────────────────────────────────────
-        const chatCompletion = await groq.chat.completions.create({
+        const chatModel = "llama-3.3-70b-versatile";
+        const chatParams: any = {
           messages: [
             { role: "system", content: chatSystemPrompt },
             { role: "user", content: `Question: ${transcript}` }
           ],
-          model: "llama-3.3-70b-versatile",
+          model: chatModel,
           response_format: { type: "json_object" },
           temperature: 0.4, // Lower = more accurate, less hallucination
-          logprobs: true,
-        });
+        };
+
+        if (supportsLogprobs(chatModel)) {
+          chatParams.logprobs = true;
+        }
+
+        const chatCompletion = await groq.chat.completions.create(chatParams);
 
         let chatData: any = { sections: [] };
         try {
@@ -299,13 +311,32 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
           chatData = { sections: [] };
         }
 
-        // Compute logprob-based confidence
+        // Compute confidence (logprob or self-estimation fallback)
         let confidence = 1.0;
         const tokens = (chatCompletion.choices[0] as any)?.logprobs?.content;
         if (tokens && Array.isArray(tokens) && tokens.length > 0) {
           const avgLogProb = tokens.reduce((s: number, t: any) => s + (t.logprob || 0), 0) / tokens.length;
           confidence = Math.exp(avgLogProb);
           console.log(`[Chat] Answer generated with logprob confidence: ${confidence.toFixed(2)}`);
+        } else {
+          try {
+            const confCompletion = await groq.chat.completions.create({
+              model: "llama-3.1-8b-instant",
+              messages: [
+                { role: "system", content: "You are evaluating the quality and correctness of an AI's answer to an interview question. Rate your confidence that the answer correctly and fully addresses the question. Output ONLY a JSON object: {\"confidence\": number} where the number is a float between 0.0 (completely wrong/irrelevant) and 1.0 (perfectly accurate/highly relevant)." },
+                { role: "user", content: `Question: ${transcript}\nAnswer: ${JSON.stringify(chatData)}` }
+              ],
+              response_format: { type: "json_object" },
+              temperature: 0.1,
+            });
+            const confData = JSON.parse(confCompletion.choices[0]?.message?.content || "{}");
+            if (typeof confData.confidence === 'number') {
+              confidence = confData.confidence;
+              console.log(`[Chat] Answer generated with LLM self-confidence: ${confidence.toFixed(2)}`);
+            }
+          } catch {
+             console.log(`[Chat] Answer generated with default confidence: 1.0`);
+          }
         }
 
         // ── STEP 4: Self-Verification for hard/system_design questions ─
@@ -421,24 +452,49 @@ ${persona === 'Language Translator' ? '\nTranslate accurately while maintaining 
 
 Return ONLY JSON.`;
 
-        const voiceCompletion = await groq.chat.completions.create({
+        const selectedVoiceModel = customModel || "llama-3.1-8b-instant";
+        const voiceParams: any = {
           messages: [
             { role: "system", content: voiceSystemPrompt },
             { role: "user", content: `Transcript: "${transcript}"` }
           ],
-          model: customModel || "llama-3.1-8b-instant",
+          model: selectedVoiceModel,
           response_format: { type: "json_object" },
           temperature: 0.3, // Low temperature = fast, accurate, deterministic
-          logprobs: true,
-        });
+        };
 
-        // Calculate actual logprob confidence
+        if (supportsLogprobs(selectedVoiceModel)) {
+          voiceParams.logprobs = true;
+        }
+
+        const voiceCompletion = await groq.chat.completions.create(voiceParams);
+
+        // Calculate actual logprob confidence or use LLM self-estimation
         const voiceTokens = (voiceCompletion.choices[0] as any)?.logprobs?.content;
         let logprobConfidence = -1;
         if (voiceTokens && Array.isArray(voiceTokens) && voiceTokens.length > 0) {
           const avgLogProb = voiceTokens.reduce((s: number, t: any) => s + (t.logprob || 0), 0) / voiceTokens.length;
           logprobConfidence = Math.exp(avgLogProb);
           console.log(`[Voice] Question detection API completed with avg logprob confidence: ${logprobConfidence.toFixed(2)}`);
+        } else {
+          try {
+            const confCompletion = await groq.chat.completions.create({
+              model: "llama-3.1-8b-instant",
+              messages: [
+                { role: "system", content: "You are evaluating an audio transcript to determine if it contains a genuine interview question or just filler conversation. Rate your confidence that the transcript contains a real question. Return ONLY a JSON object: {\"confidence\": number} where the number is a float between 0.0 (definitely just filler/no question) and 1.0 (definitely a clear question)." },
+                { role: "user", content: `Transcript: "${transcript}"` }
+              ],
+              response_format: { type: "json_object" },
+              temperature: 0.1,
+            });
+            const confData = JSON.parse(confCompletion.choices[0]?.message?.content || "{}");
+            if (typeof confData.confidence === 'number') {
+              logprobConfidence = confData.confidence;
+              console.log(`[Voice] Question detection API completed with LLM self-confidence: ${logprobConfidence.toFixed(2)}`);
+            }
+          } catch {
+             console.log(`[Voice] Question detection API fallback to default confidence`);
+          }
         }
 
         let voiceData: any = { isQuestion: false };
