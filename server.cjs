@@ -70,6 +70,16 @@ function cosineSimilarity(a, b) {
   }
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
+function extractJSON(content) {
+  if (!content) return {};
+  try {
+    const match = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (match) return JSON.parse(match[1]);
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
 import_dotenv.default.config();
 async function startServer() {
   const app = (0, import_express.default)();
@@ -78,7 +88,11 @@ async function startServer() {
   app.use(import_express.default.json({ limit: "50mb" }));
   function getGroq(customKey) {
     const key = customKey || process.env.GROQ_API_KEY;
-    if (!key) throw new Error("API key is required. Please provide it in settings or set GROQ_API_KEY environment variable.");
+    if (!key) {
+      const err = new Error("API key is required. Please provide it in settings or set GROQ_API_KEY environment variable in your .env file.");
+      err.status = 401;
+      throw err;
+    }
     return new import_groq_sdk.default({ apiKey: key });
   }
   app.get("/api/health", (req, res) => {
@@ -367,7 +381,6 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
             { role: "user", content: `Question: ${transcript}` }
           ],
           model: chatModel,
-          response_format: { type: "json_object" },
           temperature: 0.4
           // Lower = more accurate, less hallucination
         };
@@ -375,12 +388,7 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
           chatParams.logprobs = true;
         }
         const chatCompletion = await groq.chat.completions.create(chatParams);
-        let chatData = { sections: [] };
-        try {
-          chatData = JSON.parse(chatCompletion.choices[0]?.message?.content || "{}");
-        } catch {
-          chatData = { sections: [] };
-        }
+        const chatData = extractJSON(chatCompletion.choices[0]?.message?.content || "{}");
         let confidence = 1;
         const tokens = chatCompletion.choices[0]?.logprobs?.content;
         if (tokens && Array.isArray(tokens) && tokens.length > 0) {
@@ -396,10 +404,9 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
                 { role: "user", content: `Question: ${transcript}
 Answer: ${JSON.stringify(chatData)}` }
               ],
-              response_format: { type: "json_object" },
               temperature: 0.1
             });
-            const confData = JSON.parse(confCompletion.choices[0]?.message?.content || "{}");
+            const confData = extractJSON(confCompletion.choices[0]?.message?.content || "{}");
             if (typeof confData.confidence === "number") {
               confidence = confData.confidence;
               console.log(`[Chat] Answer generated with LLM self-confidence: ${confidence.toFixed(2)}`);
@@ -604,14 +611,9 @@ Return ONLY a valid JSON object matching this exact schema:
 ${jd}` }
         ],
         model: "llama-3.1-8b-instant",
-        response_format: { type: "json_object" },
         temperature: 0.3
       });
-      let data = {};
-      try {
-        data = JSON.parse(questionsCompletion.choices[0]?.message?.content || "{}");
-      } catch {
-      }
+      const data = extractJSON(questionsCompletion.choices[0]?.message?.content || "{}");
       const questions = Array.isArray(data.questions) ? data.questions : [];
       if (questions.length === 0) {
         console.log("[Cache] Failed to generate questions array.");
@@ -726,9 +728,7 @@ Job Context: ${jd.substring(0, 1e3)}` }
     startListen(initialPort);
   });
 }
-if (typeof require !== "undefined" && require.main === module) {
-  startServer().catch(console.error);
-}
+startServer().catch(console.error);
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   startServer

@@ -45,6 +45,17 @@ function cosineSimilarity(a: number[], b: number[]) {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+function extractJSON(content: string): any {
+  if (!content) return {};
+  try {
+    const match = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (match) return JSON.parse(match[1]);
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
+
 dotenv.config();
 
 export async function startServer(): Promise<number> {
@@ -56,7 +67,11 @@ export async function startServer(): Promise<number> {
 
   function getGroq(customKey?: string) {
     const key = customKey || process.env.GROQ_API_KEY;
-    if (!key) throw new Error("API key is required. Please provide it in settings or set GROQ_API_KEY environment variable.");
+    if (!key) {
+      const err = new Error("API key is required. Please provide it in settings or set GROQ_API_KEY environment variable in your .env file.");
+      (err as any).status = 401;
+      throw err;
+    }
     return new Groq({ apiKey: key });
   }
 
@@ -405,7 +420,6 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
             { role: "user", content: `Question: ${transcript}` }
           ],
           model: chatModel,
-          response_format: { type: "json_object" },
           temperature: 0.4, // Lower = more accurate, less hallucination
         };
 
@@ -415,12 +429,7 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
 
         const chatCompletion = await groq.chat.completions.create(chatParams);
 
-        let chatData: any = { sections: [] };
-        try {
-          chatData = JSON.parse(chatCompletion.choices[0]?.message?.content || "{}");
-        } catch {
-          chatData = { sections: [] };
-        }
+        const chatData = extractJSON(chatCompletion.choices[0]?.message?.content || "{}");
 
         // Compute confidence (logprob or self-estimation fallback)
         let confidence = 1.0;
@@ -437,10 +446,9 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
                 { role: "system", content: "You are evaluating the quality and correctness of an AI's answer to an interview question. Rate your confidence that the answer correctly and fully addresses the question. Output ONLY a JSON object: {\"confidence\": number} where the number is a float between 0.0 (completely wrong/irrelevant) and 1.0 (perfectly accurate/highly relevant)." },
                 { role: "user", content: `Question: ${transcript}\nAnswer: ${JSON.stringify(chatData)}` }
               ],
-              response_format: { type: "json_object" },
               temperature: 0.1,
             });
-            const confData = JSON.parse(confCompletion.choices[0]?.message?.content || "{}");
+            const confData = extractJSON(confCompletion.choices[0]?.message?.content || "{}");
             if (typeof confData.confidence === 'number') {
               confidence = confData.confidence;
               console.log(`[Chat] Answer generated with LLM self-confidence: ${confidence.toFixed(2)}`);
@@ -667,12 +675,10 @@ Return ONLY a valid JSON object matching this exact schema:
           { role: "user", content: `Job Description:\n${jd}` }
         ],
         model: "llama-3.1-8b-instant",
-        response_format: { type: "json_object" },
         temperature: 0.3,
       });
 
-      let data: any = {};
-      try { data = JSON.parse(questionsCompletion.choices[0]?.message?.content || "{}"); } catch {}
+      const data = extractJSON(questionsCompletion.choices[0]?.message?.content || "{}");
       const questions: string[] = Array.isArray(data.questions) ? data.questions : [];
       
       if (questions.length === 0) {

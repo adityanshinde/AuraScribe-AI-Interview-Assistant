@@ -17,24 +17,64 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void, o
 
   const startListening = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { displaySurface: 'browser' },
-        audio: true,
-      });
+      const isElectron = /electron/i.test(navigator.userAgent);
+      let stream: MediaStream;
+
+      if (isElectron) {
+        // In Electron, getDisplayMedia often throws 'Not supported'.
+        // Use the native getUserMedia + desktopCapturer approach.
+        const ipcRenderer = (window as any).require ? (window as any).require('electron').ipcRenderer : null;
+        if (!ipcRenderer) throw new Error("Electron IPC not available.");
+
+        const sourceId = await ipcRenderer.invoke('get-source-id');
+        if (!sourceId) throw new Error("Failed to detect primary monitor.");
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+            }
+          } as any,
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: sourceId
+            }
+          } as any
+        });
+        
+        // IMPORTANT: Do NOT stop video tracks!
+        // In Electron desktop capture, audio loopback is tied to the video capture session.
+      } else {
+        // In the regular Web App, we default to browser DOM constraints
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { displaySurface: 'browser' } as any,
+          audio: true,
+        });
+      }
+
+      // Show debug info as toast so user can report it
+      const aTracks = stream.getAudioTracks();
+      const debugInfo = `Audio: ${aTracks.length} tracks. ${aTracks.map(t => `[${t.label}] live=${t.readyState === 'live'} muted=${t.muted}`).join(', ')}`;
+      if (onError) onError(debugInfo); 
 
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length === 0) {
-        if (onError) onError('No audio track found. Please make sure to check "Also share tab audio" when selecting the tab.');
+        const isElectron = /electron/i.test(navigator.userAgent);
+        if (onError) onError(isElectron
+          ? 'System Audio Loopback failed. Ensure audio is playing and try again.'
+          : 'No audio track detected! Check "Also share tab audio" in the browser popup.');
         stream.getTracks().forEach(t => t.stop());
         return;
       }
 
+      // Create audio-only stream for MediaRecorder
       const audioStream = new MediaStream([audioTracks[0]]);
 
       streamRef.current = stream;
       isRecordingRef.current = true;
       setIsListening(true);
-      clearTranscript(); // Use the clear function to handle timers
+      clearTranscript();
 
       const recordNextChunk = () => {
         if (!isRecordingRef.current || !streamRef.current) return;
@@ -50,22 +90,25 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void, o
         }
 
         const recorder = new MediaRecorder(audioStream, options);
-        
+
         recorder.ondataavailable = async (e) => {
           if (e.data.size > 0 && isRecordingRef.current) {
+            // DEBUG Toast
+            if (onError) onError(`🎤 Chunk: ${Math.round(e.data.size/1024)}KB | mime: ${recorder.mimeType}`);
+
             const reader = new FileReader();
             reader.readAsDataURL(e.data);
             reader.onloadend = async () => {
               const base64data = (reader.result as string).split(',')[1];
               const mimeType = recorder.mimeType || 'audio/webm';
-              
+
               try {
                 const apiKey = localStorage.getItem('groq_api_key') || '';
                 const voiceModel = localStorage.getItem('groq_voice_model') || 'whisper-large-v3-turbo';
-                
+
                 const response = await fetch('/api/transcribe', {
                   method: 'POST',
-                  headers: { 
+                  headers: {
                     'Content-Type': 'application/json',
                     'x-api-key': apiKey,
                     'x-voice-model': voiceModel
@@ -77,45 +120,50 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void, o
                   setIsRateLimited(true);
                   const data = await response.json();
                   console.warn('Rate limited:', data.error);
-                  // Auto-reset rate limit after a few seconds
                   setTimeout(() => setIsRateLimited(false), (data.retryAfter || 3) * 1000);
                   return;
                 }
 
                 if (!response.ok) {
-                  throw new Error(`HTTP error! status: ${response.status}`);
+                  const errData = await response.json();
+                  throw new Error(errData.error || errData.details || `Server HTTP Error: ${response.status}`);
                 }
 
                 setIsRateLimited(false);
                 const data = await response.json();
                 const text = data.text?.trim();
-                
+
+                // DEBUG Toast
+                if (onError) onError(`📝 API returned: "${text || '(empty)'}"`);
+
                 if (text && text.length > 2) {
                   setTranscript(prev => {
                     const newTranscript = prev + (prev ? ' ' : '') + text;
-                    // Keep only last 2000 characters for UI performance
                     return newTranscript.length > 2000 ? newTranscript.slice(-2000) : newTranscript;
                   });
                   onTranscriptUpdate(text);
 
-                  // Reset auto-clear timer on new text
                   if (autoClearTimerRef.current) {
                     clearTimeout(autoClearTimerRef.current);
                   }
                   autoClearTimerRef.current = setTimeout(() => {
                     setTranscript('');
-                  }, 15000); // Clear after 15 seconds of silence
+                  }, 15000);
                 }
-              } catch (error) {
+              } catch (error: any) {
                 console.error('STT Error:', error);
+                if (onError) onError(error.message || 'Speech-to-text failed. Check API keys.');
               }
             };
+          } else {
+            // DEBUG Toast
+            if (onError) onError(`⚠️ Empty chunk: size=${e.data.size}`);
           }
         };
 
         recorder.start();
 
-        // Stop and start a new chunk every 5 seconds to avoid rate limits while reducing lag
+        // Record 5-second chunks
         setTimeout(() => {
           if (recorder.state === 'recording') {
             recorder.stop();
@@ -129,15 +177,16 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void, o
       recordNextChunk();
 
       // Handle user stopping sharing via browser UI
-      stream.getVideoTracks()[0].onended = () => {
-        stopListening();
-      };
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          stopListening();
+        };
+      }
 
     } catch (err: any) {
       console.error('Error capturing tab audio:', err);
-      if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
-        if (onError) onError('Permission denied. Please allow screen sharing and check "Also share tab audio" to capture audio.');
-      }
+      if (onError) onError(`Audio capture failed: ${err.message || err.name || 'Unknown error'}`);
       setIsListening(false);
     }
   }, [onTranscriptUpdate]);

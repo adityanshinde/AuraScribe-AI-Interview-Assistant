@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, X, Settings, Sparkles, Zap, Activity, Minimize2, Maximize2, Pin, PinOff, History, Download, EyeOff, Keyboard, MessageSquare, Send, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Mic, X, Settings, Sparkles, Zap, Activity, Minimize2, Maximize2, Pin, PinOff, History, Download, EyeOff, Keyboard, MessageSquare, Send, AlertTriangle, CheckCircle, Monitor } from 'lucide-react';
 import { useTabAudioCapture } from '../hooks/useTabAudioCapture';
 import { useAIAssistant } from '../hooks/useAIAssistant';
 import { Visualizer } from './Visualizer';
@@ -61,6 +61,7 @@ export default function OverlayWidget() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateResult, setGenerateResult] = useState<{ status: string; isError?: boolean } | null>(null);
   const [appAlert, setAppAlert] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
+  const [screenSources, setScreenSources] = useState<{id: string, name: string, thumbnail: string}[] | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   const showAlert = React.useCallback((message: string, type: 'error'|'success'|'info' = 'info') => {
@@ -68,7 +69,7 @@ export default function OverlayWidget() {
     setTimeout(() => setAppAlert(null), 4000);
   }, []);
 
-  const { detectedQuestion, answer, isProcessing, processTranscript, askQuestion, resetAssistant } = useAIAssistant();
+  const { detectedQuestion, answer, isProcessing, processTranscript, askQuestion, resetAssistant } = useAIAssistant(undefined, (msg) => showAlert(msg, 'error'));
   const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript, (msg) => showAlert(msg, 'error'));
 
   const handleChatSubmit = async () => {
@@ -80,7 +81,6 @@ export default function OverlayWidget() {
     chatInputRef.current?.blur();
     await askQuestion(q);
   };
-
 
   // ── Stealth hotkey: Ctrl+Shift+Space from Electron focuses chat input ──
   // When triggered, no mouse movement happens — purely keyboard-driven.
@@ -248,11 +248,21 @@ export default function OverlayWidget() {
     }
   };
 
-  const toggleListen = () => {
+  const toggleListen = async () => {
     if (isListening) {
       stopListening();
+      // Re-enable click-through after stopping
+      ipc?.send('chat-input-blurred');
     } else {
-      startListening();
+      // Temporarily disable click-through so getDisplayMedia sees a real user gesture
+      ipc?.send('chat-input-focused');
+      try {
+        await startListening();
+      } catch (e) {
+        console.error('Start listening failed:', e);
+      }
+      // Re-enable click-through after the stream is attached
+      ipc?.send('chat-input-blurred');
     }
   };
 

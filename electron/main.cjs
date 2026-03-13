@@ -1,4 +1,5 @@
 const { app, BrowserWindow, globalShortcut, desktopCapturer, ipcMain } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
 // Invisible in Dock (macOS)
@@ -24,19 +25,19 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
+      backgroundThrottling: false, // Prevents background tabs from sleeping (needed for audio APIs without focus)
+      devTools: !app.isPackaged, // Disable DevTools when compiled into the .exe completely saving ~80MB RAM
     },
   });
 
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setContentProtection(true); // Invisible on screen share (Zoom, Teams, OBS)
-
+  win.setVisibleOnAllWorkspaces(true);
   // ============================================================
-  // STEALTH CURSOR: Click-through ON by default.
-  // The overlay is always transparent to mouse clicks — the cursor
-  // never visibly moves to AuraScribe. Interaction is keyboard-only.
+  // STEALTH CURSOR: Click-through OFF by default so buttons work.
+  // User can toggle with Ctrl+Shift+X for full stealth mode.
   // ============================================================
-  let isClickThrough = true;
-  win.setIgnoreMouseEvents(true, { forward: true });
+  let isClickThrough = false;
 
   // ============================================================
   // IPC: Renderer tells us when chat input is focused / blurred.
@@ -58,16 +59,33 @@ function createWindow() {
   });
 
   // ============================================================
-  // Handle Screen/Audio Capture in Electron
-  // Auto-selects the screen + system audio (loopback) without a popup.
+  // System Audio Capture (WASAPI Loopback)
+  // This handler intercepts getDisplayMedia() in the renderer and
+  // auto-selects the primary screen with system audio loopback.
+  // MUST be registered for getDisplayMedia to work in Electron.
   // ============================================================
   win.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-      callback({ video: sources[0], audio: 'loopback' });
+      callback({
+        video: sources[0],
+        audio: 'loopback'
+      });
     }).catch(err => {
-      console.error('Error getting sources:', err);
-      callback();
+      console.error('Error in displayMediaRequestHandler:', err);
+      callback(null);
     });
+  });
+
+  // Fallback: IPC handler for getUserMedia approach
+  ipcMain.handle('get-source-id', async () => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      if (sources.length === 0) return null;
+      return sources[0].id; // Primary monitor
+    } catch (err) {
+      console.error('Error getting desktop sources:', err);
+      return null;
+    }
   });
 
   // Auto-grant all permissions (Microphone, Screen Share, etc.)
@@ -76,22 +94,29 @@ function createWindow() {
   });
 
   // ============================================================
+  // Open DevTools in development for debugging
+  // ============================================================
+  if (!app.isPackaged) {
+    win.webContents.openDevTools({ mode: 'detach' });
+  }
+
+  // ============================================================
   // START BACKEND DURING PACKAGED INJECTIONS
   // ============================================================
   if (app.isPackaged) {
     process.env.NODE_ENV = 'production'; // signal server to serve Vite Dist instead of HMR
-    const serverModule = require(path.join(__dirname, '../server.cjs')); 
+    const serverModule = require(path.join(__dirname, '../server.cjs'));
     if (serverModule && serverModule.startServer) {
-        serverModule.startServer().then((port) => {
-            win.loadURL(`http://localhost:${port}`);
-        }).catch(err => {
-            console.error("Failed to start embedded Node server:", err);
-        });
+      serverModule.startServer().then((port) => {
+        win.loadURL(`http://localhost:${port}`);
+      }).catch(err => {
+        console.error("Failed to start embedded Node server:", err);
+      });
     } else {
-        win.loadURL('http://localhost:3000');
+      win.loadURL('http://localhost:3000');
     }
   } else {
-      win.loadURL('http://localhost:3000');
+    win.loadURL('http://localhost:3000');
   }
 
   // ============================================================
@@ -107,7 +132,7 @@ function createWindow() {
   });
 
   ipcMain.on('set-stealth-mode', (event, flag) => {
-    win.setContentProtection(flag); 
+    win.setContentProtection(flag);
     console.log('[Stealth] Content protection:', flag);
   });
 
@@ -178,7 +203,14 @@ if (!gotTheLock) {
     }
   });
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    createWindow();
+
+    // Check for updates natively if running inside the compiled .exe
+    if (app.isPackaged) {
+      autoUpdater.checkForUpdatesAndNotify();
+    }
+  });
 
   app.on('will-quit', () => {
     globalShortcut.unregisterAll();

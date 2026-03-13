@@ -16,7 +16,7 @@ export interface QuestionDetection {
   type: string;
 }
 
-export function useAIAssistant(onQuestionDetected?: () => void) {
+export function useAIAssistant(onQuestionDetected?: () => void, onError?: (msg: string) => void) {
   const [detectedQuestion, setDetectedQuestion] = useState<QuestionDetection | null>(null);
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -161,7 +161,8 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          const errData = await response.json();
+          throw new Error(errData.error || errData.details || `Server HTTP Error: ${response.status}`);
         }
 
         const data = await response.json();
@@ -194,9 +195,10 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
           transcriptBufferRef.current = transcriptBufferRef.current.slice(-20);
         }
         setIsProcessing(false);
-      } catch (error) {
+      } catch (error: any) {
         console.error('AI Processing Error:', error);
         setIsProcessing(false);
+        if (onError) onError(error.message || 'AI Processing failed. Check API key format.');
       }
     }
     }, 800); // Wait 800ms between transcript updates before processing
@@ -225,7 +227,10 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
         body: JSON.stringify({ transcript: questionText, resume, jd })
       });
 
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || errData.details || `Server HTTP Error: ${response.status}`);
+      }
 
       const data = await response.json();
 
@@ -252,9 +257,10 @@ export function useAIAssistant(onQuestionDetected?: () => void) {
 
 
       setIsProcessing(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Chat AI Error:', error);
       setIsProcessing(false);
+      if (onError) onError(error.message || 'Chat prompt failed. Check API key format.');
     }
   }, [isProcessing, playSpeech]);
 
