@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, X, Settings, Sparkles, Zap, Activity, Minimize2, Maximize2, Pin, PinOff, History, Download, EyeOff, Keyboard, MessageSquare, Send } from 'lucide-react';
+import { Mic, X, Settings, Sparkles, Zap, Activity, Minimize2, Maximize2, Pin, PinOff, History, Download, EyeOff, Keyboard, MessageSquare, Send, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useTabAudioCapture } from '../hooks/useTabAudioCapture';
 import { useAIAssistant } from '../hooks/useAIAssistant';
 import { Visualizer } from './Visualizer';
@@ -36,6 +36,8 @@ export default function OverlayWidget() {
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [isHidden, setIsHidden] = useState(false);
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(true);
+  const [isTaskbarHidden, setIsTaskbarHidden] = useState(true);
+  const [isAntiCaptureOn, setIsAntiCaptureOn] = useState(true);
   const [opacity, setOpacity] = useState(90);
   const [persona, setPersona] = useState('Technical Interviewer');
   const [resume, setResume] = useState('');
@@ -56,10 +58,18 @@ export default function OverlayWidget() {
 
   const [activeTab, setActiveTab] = useState<'voice' | 'chat'>('voice');
   const [chatInput, setChatInput] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generateResult, setGenerateResult] = useState<{ status: string; isError?: boolean } | null>(null);
+  const [appAlert, setAppAlert] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
+  const showAlert = React.useCallback((message: string, type: 'error'|'success'|'info' = 'info') => {
+    setAppAlert({ message, type });
+    setTimeout(() => setAppAlert(null), 4000);
+  }, []);
+
   const { detectedQuestion, answer, isProcessing, processTranscript, askQuestion, resetAssistant } = useAIAssistant();
-  const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript);
+  const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript, (msg) => showAlert(msg, 'error'));
 
   const handleChatSubmit = async () => {
     const q = chatInput.trim();
@@ -142,6 +152,29 @@ export default function OverlayWidget() {
     if (savedHotkeys) setHotkeys(JSON.parse(savedHotkeys));
     if (savedOutputDevice) setSelectedOutputDevice(savedOutputDevice);
     setEnableTTS(savedEnableTTS);
+
+    // Load stealth toggles
+    const savedTaskbar = localStorage.getItem('aura_stealth_taskbar');
+    const savedAntiCapture = localStorage.getItem('aura_stealth_capture');
+    
+    if (savedTaskbar !== null) {
+      const isHidden = savedTaskbar === 'true';
+      setIsTaskbarHidden(isHidden);
+      if (ipc) ipc.send('set-skip-taskbar', isHidden);
+    } else {
+      // Default stealth behavior on first load
+      if (ipc) ipc.send('set-skip-taskbar', true);
+    }
+
+    if (savedAntiCapture !== null) {
+      const isOn = savedAntiCapture === 'true';
+      setIsAntiCaptureOn(isOn);
+      if (ipc) ipc.send('set-stealth-mode', isOn);
+    } else {
+      // Default stealth behavior on first load
+      if (ipc) ipc.send('set-stealth-mode', true);
+    }
+
   }, []);
 
   useEffect(() => {
@@ -192,6 +225,29 @@ export default function OverlayWidget() {
     setHistory([]);
   };
 
+  const generateCache = async () => {
+    if (!jd || jd.length < 50) return showAlert("Please enter a sufficiently long Job Description first.", "error");
+    setIsGenerating(true);
+    setGenerateResult(null);
+    try {
+      const res = await fetch('/api/generate-cache', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+        },
+        body: JSON.stringify({ jd, resume })
+      });
+      const data = await res.json();
+      setGenerateResult({ status: data.status, isError: !res.ok });
+    } catch (e) {
+      console.error(e);
+      setGenerateResult({ status: "Failed to start generation pipeline.", isError: true });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const toggleListen = () => {
     if (isListening) {
       stopListening();
@@ -203,9 +259,21 @@ export default function OverlayWidget() {
   const toggleAlwaysOnTop = () => {
     const newState = !isAlwaysOnTop;
     setIsAlwaysOnTop(newState);
-    if (ipc) {
-      ipc.send('set-always-on-top', newState);
-    }
+    if (ipc) ipc.send('set-always-on-top', newState);
+  };
+
+  const toggleTaskbarHidden = () => {
+    const newState = !isTaskbarHidden;
+    setIsTaskbarHidden(newState);
+    localStorage.setItem('aura_stealth_taskbar', newState.toString());
+    if (ipc) ipc.send('set-skip-taskbar', newState);
+  };
+
+  const toggleAntiCapture = () => {
+    const newState = !isAntiCaptureOn;
+    setIsAntiCaptureOn(newState);
+    localStorage.setItem('aura_stealth_capture', newState.toString());
+    if (ipc) ipc.send('set-stealth-mode', newState);
   };
 
   const exportHistory = () => {
@@ -232,14 +300,29 @@ export default function OverlayWidget() {
       )}
       style={{ opacity: opacity / 100 }}
     >
+      {/* Global Toast Alert */}
+      {appAlert && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className={cn("px-4 py-2.5 rounded-lg shadow-2xl border text-xs font-bold flex items-center gap-3 w-max max-w-[90vw]",
+             appAlert.type === 'error' ? "bg-red-500/20 border-red-500/50 text-red-100 backdrop-blur-md" :
+             appAlert.type === 'success' ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-100 backdrop-blur-md" :
+             "bg-cyan-500/20 border-cyan-500/50 text-cyan-100 backdrop-blur-md"
+          )}>
+             {appAlert.type === 'error' ? <AlertTriangle size={16} className="text-red-400"/> : <CheckCircle size={16} className={appAlert.type === 'success' ? 'text-emerald-400' : 'text-cyan-400'} />}
+             <span className="opacity-90 leading-tight">{appAlert.message}</span>
+             <button onClick={() => setAppAlert(null)} className="ml-2 hover:bg-white/10 p-1 rounded-full transition-colors"><X size={14}/></button>
+          </div>
+        </div>
+      )}
+
       {isHidden ? (
         <button
           onClick={() => setIsHidden(false)}
           className="w-12 h-12 rounded-full bg-[#0a0a0a]/90 backdrop-blur-xl border border-white/10 flex items-center justify-center shadow-[0_0_20px_rgba(34,211,238,0.3)] hover:scale-110 transition-transform group/btn"
           title="Show AuraScribe (Ctrl+Shift+H)"
         >
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-cyan-500/20 group-hover/btn:shadow-cyan-500/40 transition-shadow">
-            <Sparkles size={16} className="text-white" />
+          <div className="w-8 h-8 flex items-center justify-center overflow-hidden drop-shadow-[0_0_8px_rgba(34,211,238,0.5)] group-hover/btn:scale-110 transition-transform">
+            <img src="/icon.png" alt="AuraScribe" className="w-full h-full object-contain" />
           </div>
         </button>
       ) : (
@@ -248,8 +331,8 @@ export default function OverlayWidget() {
           {/* Header (Draggable via Electron) */}
           <div className="drag-region h-12 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] shrink-0">
             <div className="flex items-center gap-2.5">
-              <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-                <Sparkles size={10} className="text-white" />
+              <div className="w-5 h-5 flex items-center justify-center overflow-hidden drop-shadow-[0_0_5px_rgba(34,211,238,0.5)]">
+                <img src="/icon.png" alt="AuraScribe" className="w-full h-full object-contain" />
               </div>
               <span className="font-semibold text-sm tracking-wide text-white/90">AuraScribe</span>
             </div>
@@ -387,6 +470,20 @@ export default function OverlayWidget() {
                       placeholder="Paste the job description here..."
                       className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500 transition-colors h-24 resize-none scrollbar-hide"
                     />
+                    <div className="flex justify-end relative bottom-1">
+                      <button 
+                        onClick={generateCache}
+                        disabled={isGenerating || !jd || jd.length < 50}
+                        className={cn(
+                          "text-[10px] px-3 py-1.5 rounded transition-colors uppercase tracking-wider font-bold shadow-md",
+                          isGenerating 
+                             ? "bg-slate-800 text-slate-500 cursor-not-allowed border-transparent"
+                             : "bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 border border-cyan-500/30"
+                        )}
+                      >
+                        {isGenerating ? "Generating Cache..." : "Generate Interview Cache ⚡"}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -402,6 +499,24 @@ export default function OverlayWidget() {
                       onChange={(e) => setOpacity(parseInt(e.target.value))}
                       className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                     />
+                  </div>
+
+                  <div className="flex flex-col gap-3 p-3 bg-white/5 rounded-lg border border-white/10 my-2">
+                    <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2"><EyeOff size={14}/> Stealth Capabilities</label>
+                    
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-white">Hide from Taskbar / Alt+Tab</span>
+                      <button onClick={toggleTaskbarHidden} className={cn("w-8 h-4 rounded-full relative transition-colors", isTaskbarHidden ? "bg-cyan-500" : "bg-slate-700")}>
+                        <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all", isTaskbarHidden ? "left-4.5" : "left-0.5")} />
+                      </button>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-bold text-white">Anti-Screenshare Shield</span>
+                      <button onClick={toggleAntiCapture} className={cn("w-8 h-4 rounded-full relative transition-colors", isAntiCaptureOn ? "bg-cyan-500" : "bg-slate-700")}>
+                        <div className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all", isAntiCaptureOn ? "left-4.5" : "left-0.5")} />
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex flex-col gap-2">
@@ -489,11 +604,45 @@ export default function OverlayWidget() {
 
                   <button
                     onClick={saveSettings}
-                    className="mt-2 bg-white text-black hover:bg-slate-200 py-2.5 rounded-lg text-sm font-bold transition-colors shadow-[0_0_15px_rgba(255,255,255,0.15)]"
+                    disabled={isGenerating}
+                    className={cn(
+                      "mt-2 py-2.5 rounded-lg text-sm font-bold transition-colors shadow-[0_0_15px_rgba(255,255,255,0.15)]",
+                      isGenerating
+                        ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                        : "bg-white text-black hover:bg-slate-200"
+                    )}
                   >
                     Save Changes
                   </button>
                 </div>
+
+                {/* Styled Generation Popup / Loading Overlay inside Settings */}
+                {isGenerating && (
+                  <div className="absolute inset-0 z-50 bg-[#0a0a0a]/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center shadow-inner pt-20">
+                    <div className="h-10 w-10 border-4 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin mb-4" />
+                    <h3 className="text-white font-bold text-lg mb-2">Generating Priority Vector Cache</h3>
+                    <p className="text-slate-400 text-xs">Simulating 35 distinct potential interview scenarios. Please do not close...</p>
+                  </div>
+                )}
+                
+                {generateResult && !isGenerating && (
+                  <div className="absolute inset-0 z-50 bg-[#0a0a0a]/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center shadow-inner pt-20">
+                    <div className={cn(
+                      "h-12 w-12 rounded-full mb-4 flex items-center justify-center border-2",
+                      generateResult.isError ? "bg-red-500/10 border-red-500 text-red-500" : "bg-emerald-500/10 border-emerald-500 text-emerald-500"
+                    )}>
+                      {generateResult.isError ? <X size={24} /> : <Sparkles size={24} />}
+                    </div>
+                    <h3 className="text-white font-bold text-lg mb-2">{generateResult.isError ? 'Cache Generation Failed' : 'Cache Optimized Successfully'}</h3>
+                    <p className="text-slate-400 text-xs mb-6 max-w-xs">{generateResult.status}</p>
+                    <button
+                      onClick={() => setGenerateResult(null)}
+                      className="px-6 py-2 bg-white text-black text-sm font-bold rounded-lg hover:bg-slate-200 transition-colors"
+                    >
+                      Continue
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex-1 flex flex-col overflow-hidden">

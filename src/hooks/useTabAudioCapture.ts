@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 
-export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
+export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void, onError?: (msg: string) => void) {
   const [isListening, setIsListening] = useState(false);
   const [isRateLimited, setIsRateLimited] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -24,7 +24,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
 
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length === 0) {
-        alert('No audio track found. Please make sure to check "Also share tab audio" when selecting the tab.');
+        if (onError) onError('No audio track found. Please make sure to check "Also share tab audio" when selecting the tab.');
         stream.getTracks().forEach(t => t.stop());
         return;
       }
@@ -136,7 +136,7 @@ export function useTabAudioCapture(onTranscriptUpdate: (text: string) => void) {
     } catch (err: any) {
       console.error('Error capturing tab audio:', err);
       if (err.name === 'NotAllowedError' || err.message?.includes('Permission denied')) {
-        alert('Permission denied. Please allow screen sharing and check "Also share tab audio" to capture audio.');
+        if (onError) onError('Permission denied. Please allow screen sharing and check "Also share tab audio" to capture audio.');
       }
       setIsListening(false);
     }

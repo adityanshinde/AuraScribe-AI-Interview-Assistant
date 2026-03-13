@@ -1,39 +1,65 @@
-import express from 'express';
-import { createServer } from 'http';
-import dotenv from 'dotenv';
-import Groq from 'groq-sdk';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
-import { pipeline, env } from '@xenova/transformers';
+var __create = Object.create;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// Suppress local transformer model warnings and force download
-env.allowLocalModels = false;
-
-// ════════════════════════════════════════════════════════════════
-// VECTOR CACHE (Pre-Interview Generation to drastically reduce latency)
-// ════════════════════════════════════════════════════════════════
-let vectorCache: any[] = [];
-const CACHE_FILE = path.join(os.tmpdir(), 'aurascribe_cache.json');
+// server.ts
+var server_exports = {};
+__export(server_exports, {
+  startServer: () => startServer
+});
+module.exports = __toCommonJS(server_exports);
+var import_express = __toESM(require("express"), 1);
+var import_http = require("http");
+var import_dotenv = __toESM(require("dotenv"), 1);
+var import_groq_sdk = __toESM(require("groq-sdk"), 1);
+var import_fs = __toESM(require("fs"), 1);
+var import_path = __toESM(require("path"), 1);
+var import_os = __toESM(require("os"), 1);
+var import_transformers = require("@xenova/transformers");
+import_transformers.env.allowLocalModels = false;
+var vectorCache = [];
+var CACHE_FILE = import_path.default.join(import_os.default.tmpdir(), "aurascribe_cache.json");
 try {
-  if (fs.existsSync(CACHE_FILE)) {
-    vectorCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'));
+  if (import_fs.default.existsSync(CACHE_FILE)) {
+    vectorCache = JSON.parse(import_fs.default.readFileSync(CACHE_FILE, "utf-8"));
     console.log(`Loaded ${vectorCache.length} cached answers from disk.`);
   }
 } catch (e) {
-  console.log('No cache found or malformed.');
+  console.log("No cache found or malformed.");
 }
-
-let extractor: any = null;
-async function getEmbedding(text: string): Promise<number[]> {
+var extractor = null;
+async function getEmbedding(text) {
   if (!extractor) {
-    extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    extractor = await (0, import_transformers.pipeline)("feature-extraction", "Xenova/all-MiniLM-L6-v2");
   }
-  const output = await extractor(text, { pooling: 'mean', normalize: true });
-  return Array.from(output.data) as number[];
+  const output = await extractor(text, { pooling: "mean", normalize: true });
+  return Array.from(output.data);
 }
-
-function cosineSimilarity(a: number[], b: number[]) {
+function cosineSimilarity(a, b) {
   let dotProduct = 0;
   let normA = 0;
   let normB = 0;
@@ -44,52 +70,39 @@ function cosineSimilarity(a: number[], b: number[]) {
   }
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
-
-dotenv.config();
-
-export async function startServer(): Promise<number> {
-  const app = express();
-  let initialPort = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-  const httpServer = createServer(app);
-
-  app.use(express.json({ limit: '50mb' }));
-
-  function getGroq(customKey?: string) {
+import_dotenv.default.config();
+async function startServer() {
+  const app = (0, import_express.default)();
+  let initialPort = process.env.PORT ? parseInt(process.env.PORT) : 3e3;
+  const httpServer = (0, import_http.createServer)(app);
+  app.use(import_express.default.json({ limit: "50mb" }));
+  function getGroq(customKey) {
     const key = customKey || process.env.GROQ_API_KEY;
     if (!key) throw new Error("API key is required. Please provide it in settings or set GROQ_API_KEY environment variable.");
-    return new Groq({ apiKey: key });
+    return new import_groq_sdk.default({ apiKey: key });
   }
-
-  // API routes
-  app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok" });
   });
-
   app.post("/api/transcribe", async (req, res) => {
-    let tmpFilePath = '';
+    let tmpFilePath = "";
     try {
-      const customKey = req.headers['x-api-key'] as string;
-      const customVoiceModel = req.headers['x-voice-model'] as string;
+      const customKey = req.headers["x-api-key"];
+      const customVoiceModel = req.headers["x-voice-model"];
       const groq = getGroq(customKey);
-
       const { audioBase64, mimeType } = req.body;
       if (!audioBase64) {
         return res.status(400).json({ error: "No audio provided" });
       }
-
-      const ext = mimeType?.includes('mp4') ? 'mp4' : 'webm';
-      tmpFilePath = path.join(os.tmpdir(), `audio-${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`);
-      fs.writeFileSync(tmpFilePath, Buffer.from(audioBase64, 'base64'));
-
+      const ext = mimeType?.includes("mp4") ? "mp4" : "webm";
+      tmpFilePath = import_path.default.join(import_os.default.tmpdir(), `audio-${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`);
+      import_fs.default.writeFileSync(tmpFilePath, Buffer.from(audioBase64, "base64"));
       const transcription = await groq.audio.transcriptions.create({
-        file: fs.createReadStream(tmpFilePath),
+        file: import_fs.default.createReadStream(tmpFilePath),
         model: customVoiceModel || "whisper-large-v3-turbo",
-        response_format: "json",
+        response_format: "json"
       });
-
       let text = transcription.text || "";
-
-      // Filter out common Whisper hallucinations on silence or background noise
       const hallucinations = [
         "thank you",
         "thanks for watching",
@@ -139,11 +152,8 @@ export async function startServer(): Promise<number> {
         "leave a comment",
         "share this video"
       ];
-
       const cleanText = text.trim().toLowerCase().replace(/[.,!?;:]/g, "");
-
-      // Technical term corrections (Whisper often mishears these)
-      const corrections: Record<string, string> = {
+      const corrections = {
         "virtual dome": "virtual DOM",
         "react.js": "React",
         "view.js": "Vue.js",
@@ -163,79 +173,58 @@ export async function startServer(): Promise<number> {
         "gcp": "GCP",
         "eaml": "YAML",
         "travel inheritance": "types of inheritance",
-        "travel inheritances": "types of inheritance",
+        "travel inheritances": "types of inheritance"
       };
-
       let correctedText = text;
       Object.entries(corrections).forEach(([wrong, right]) => {
-        const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
+        const regex = new RegExp(`\\b${wrong}\\b`, "gi");
         correctedText = correctedText.replace(regex, right);
       });
       text = correctedText;
-
-      // If the text is just one of the hallucinations and very short, discard it
-      // But don't discard if it's part of a longer sentence
-      const isHallucination = hallucinations.some(h => cleanText === h && text.length < 20);
-
+      const isHallucination = hallucinations.some((h) => cleanText === h && text.length < 20);
       if (isHallucination || text.length < 2) {
         text = "";
       }
-
       res.json({ text });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Transcription error:", error);
       const status = error.status || 500;
       const message = error.message || "Transcription failed";
-
       if (status === 429) {
         return res.status(429).json({
           error: "Rate limit reached. Please wait a moment.",
-          retryAfter: error.headers?.['retry-after'] || 3
+          retryAfter: error.headers?.["retry-after"] || 3
         });
       }
-
       res.status(status).json({ error: message });
     } finally {
-      if (tmpFilePath && fs.existsSync(tmpFilePath)) {
-        fs.unlinkSync(tmpFilePath);
+      if (tmpFilePath && import_fs.default.existsSync(tmpFilePath)) {
+        import_fs.default.unlinkSync(tmpFilePath);
       }
     }
   });
-
   app.post("/api/analyze", async (req, res) => {
     try {
-      const customKey = req.headers['x-api-key'] as string;
-      const customModel = req.headers['x-model'] as string;
-      const persona = req.headers['x-persona'] as string || 'Technical Interviewer';
-      const mode = req.headers['x-mode'] as string || 'voice';
+      const customKey = req.headers["x-api-key"];
+      const customModel = req.headers["x-model"];
+      const persona = req.headers["x-persona"] || "Technical Interviewer";
+      const mode = req.headers["x-mode"] || "voice";
       const groq = getGroq(customKey);
-
-      const supportsLogprobs = (model: string) => {
-        // Define models that are known to support logprobs or skip it completely
-        const supported = ['llama3-8b-8192'];
+      const supportsLogprobs = (model) => {
+        const supported = ["llama3-8b-8192"];
         return supported.includes(model);
       };
-
       const { transcript, resume, jd } = req.body;
       if (!transcript) {
         return res.status(400).json({ error: "No transcript provided" });
       }
-
-      // ════════════════════════════════════════════════════════════════
-      // FAST LOOKUP — Vector Cache Match
-      // ════════════════════════════════════════════════════════════════
       try {
-        if (vectorCache.length > 0 && (mode === 'chat' || mode === 'voice')) {
+        if (vectorCache.length > 0 && (mode === "chat" || mode === "voice")) {
           const emb = await getEmbedding(transcript);
-          
           let topMatches = [];
           for (const item of vectorCache) {
-            // Ignore items embedded with a different model if one changes down the line
-            if (item.embeddingModel && item.embeddingModel !== 'all-MiniLM-L6-v2') continue;
-            
+            if (item.embeddingModel && item.embeddingModel !== "all-MiniLM-L6-v2") continue;
             let maxScore = cosineSimilarity(emb, item.embedding);
-            
-            // Check all variants for a potentially higher similarity hit
             if (item.variantEmbeddings && Array.isArray(item.variantEmbeddings)) {
               for (const varEmb of item.variantEmbeddings) {
                 const varScore = cosineSimilarity(emb, varEmb);
@@ -244,65 +233,52 @@ export async function startServer(): Promise<number> {
                 }
               }
             }
-
             topMatches.push({ item, score: maxScore });
           }
-          
           topMatches.sort((a, b) => b.score - a.score);
-          // Look at topK = 5
           const bestMatches = topMatches.slice(0, 5);
-          
-          // Re-rank basic thresholding check logic
           let bestMatch = null;
           let bestScore = -1;
           for (const match of bestMatches) {
-             if (match.score > bestScore) {
-                bestScore = match.score;
-                bestMatch = match.item;
-             }
+            if (match.score > bestScore) {
+              bestScore = match.score;
+              bestMatch = match.item;
+            }
           }
-
-          // Optimal threshold for all-MiniLM-L6-v2 context variations
           if (bestMatch && bestScore > 0.82) {
-             console.log(`[Cache HIT] Score: ${bestScore.toFixed(2)} | Q: ${bestMatch.question.substring(0, 40)}`);
-             if (mode === 'chat') {
-                 return res.json({
-                   isQuestion: true,
-                   question: bestMatch.question, // Re-map nicely to the clean generated question
-                   confidence: 1.0,
-                   type: bestMatch.answer.type || 'concept',
-                   difficulty: bestMatch.answer.difficulty || 'medium',
-                   sections: bestMatch.answer.sections || [],
-                   code: bestMatch.answer.code || "",
-                   codeLanguage: bestMatch.answer.codeLanguage || "",
-                   bullets: [],
-                   spoken: bestMatch.answer.spoken || "",
-                 });
-             } else {
-                 return res.json({
-                   isQuestion: true,
-                   question: bestMatch.question,
-                   confidence: 1.0,
-                   type: bestMatch.answer.type || 'technical',
-                   bullets: bestMatch.answer.bullets || bestMatch.answer.sections?.flatMap((s: any) => s.points || []) || [],
-                   spoken: bestMatch.answer.spoken || "I can definitely help with that.",
-                 });
-             }
+            console.log(`[Cache HIT] Score: ${bestScore.toFixed(2)} | Q: ${bestMatch.question.substring(0, 40)}`);
+            if (mode === "chat") {
+              return res.json({
+                isQuestion: true,
+                question: bestMatch.question,
+                // Re-map nicely to the clean generated question
+                confidence: 1,
+                type: bestMatch.answer.type || "concept",
+                difficulty: bestMatch.answer.difficulty || "medium",
+                sections: bestMatch.answer.sections || [],
+                code: bestMatch.answer.code || "",
+                codeLanguage: bestMatch.answer.codeLanguage || "",
+                bullets: [],
+                spoken: bestMatch.answer.spoken || ""
+              });
+            } else {
+              return res.json({
+                isQuestion: true,
+                question: bestMatch.question,
+                confidence: 1,
+                type: bestMatch.answer.type || "technical",
+                bullets: bestMatch.answer.bullets || bestMatch.answer.sections?.flatMap((s) => s.points || []) || [],
+                spoken: bestMatch.answer.spoken || "I can definitely help with that."
+              });
+            }
           }
         }
       } catch (e) {
         console.error("Vector search failed, falling back to LLM", e);
       }
-
-      // ════════════════════════════════════════════════════════════════
-      // CHAT MODE — Adaptive Prompting + Self-Verification Pipeline
-      // ════════════════════════════════════════════════════════════════
-      if (mode === 'chat') {
-
-        // ── STEP 1: Difficulty Classifier (cheap + fast) ──────────────
-        let questionType = 'concept';
-        let difficulty = 'medium';
-
+      if (mode === "chat") {
+        let questionType = "concept";
+        let difficulty = "medium";
         try {
           const classifyCompletion = await groq.chat.completions.create({
             messages: [
@@ -323,31 +299,19 @@ Rules:
             ],
             model: "llama-3.1-8b-instant",
             response_format: { type: "json_object" },
-            temperature: 0.1,
+            temperature: 0.1
           });
-          let classifyData: any = {};
-          try { classifyData = JSON.parse(classifyCompletion.choices[0]?.message?.content || "{}"); } catch { }
-          questionType = classifyData.type || 'concept';
-          difficulty = classifyData.difficulty || 'medium';
-        } catch { /* use defaults */ }
-
-        // ── STEP 2: Build Adaptive Prompt ─────────────────────────────
-        // Section structure hint based on question type
-        const sectionHint = questionType === 'coding'
-          ? `Sections MUST be: "Problem Understanding", "Approach & Logic", "Complexity Analysis". Always fill the code field with complete working code.`
-          : questionType === 'behavioral'
-            ? `Sections MUST be: "Situation", "What I Did", "Result & Learnings". Write in confident first-person.`
-            : questionType === 'system_design'
-              ? `Sections: "Architecture Overview", "Core Components", "Trade-offs & Bottlenecks", "Scaling Strategy". Focus on distributed systems thinking.`
-              : `If comparing TWO things: "X Overview", "Y Overview", "Key Differences", "When To Use Which". If one concept: "What It Is", "How It Works", "Trade-offs", "When To Use".`;
-
-        // Difficulty-aware depth instructions
-        const depthHint = difficulty === 'easy'
-          ? `DEPTH: Focus on clarity and intuition. Avoid unnecessary complexity. Prioritize simple, memorable explanations a junior can follow.`
-          : difficulty === 'hard'
-            ? `DEPTH: Break down reasoning deeply. Discuss scalability, reliability, and bottlenecks. Mention trade-offs between approaches. Cite Big-O where relevant.`
-            : `DEPTH: Include practical engineering trade-offs. Mention complexity where relevant. Balance theory with real-world usage.`;
-
+          let classifyData = {};
+          try {
+            classifyData = JSON.parse(classifyCompletion.choices[0]?.message?.content || "{}");
+          } catch {
+          }
+          questionType = classifyData.type || "concept";
+          difficulty = classifyData.difficulty || "medium";
+        } catch {
+        }
+        const sectionHint = questionType === "coding" ? `Sections MUST be: "Problem Understanding", "Approach & Logic", "Complexity Analysis". Always fill the code field with complete working code.` : questionType === "behavioral" ? `Sections MUST be: "Situation", "What I Did", "Result & Learnings". Write in confident first-person.` : questionType === "system_design" ? `Sections: "Architecture Overview", "Core Components", "Trade-offs & Bottlenecks", "Scaling Strategy". Focus on distributed systems thinking.` : `If comparing TWO things: "X Overview", "Y Overview", "Key Differences", "When To Use Which". If one concept: "What It Is", "How It Works", "Trade-offs", "When To Use".`;
+        const depthHint = difficulty === "easy" ? `DEPTH: Focus on clarity and intuition. Avoid unnecessary complexity. Prioritize simple, memorable explanations a junior can follow.` : difficulty === "hard" ? `DEPTH: Break down reasoning deeply. Discuss scalability, reliability, and bottlenecks. Mention trade-offs between approaches. Cite Big-O where relevant.` : `DEPTH: Include practical engineering trade-offs. Mention complexity where relevant. Balance theory with real-world usage.`;
         const chatSystemPrompt = `You are a senior software engineer, system design mentor, and interview coach.
 
 Your task: answer the user's question in a clear, structured, interview-ready format.
@@ -386,47 +350,41 @@ CODE RULES:
 ${depthHint}
 
 CONTEXT:
-Resume: ${resume || 'Not provided'}
-Job Description: ${jd || 'Not provided'}
+Resume: ${resume || "Not provided"}
+Job Description: ${jd || "Not provided"}
 Persona: ${persona}
 
 PERSONA ADJUSTMENTS:
-${persona === 'Technical Interviewer' ? '- Emphasize architecture decisions, Big-O complexity, trade-offs, and production concerns.' : ''}
-${persona === 'Executive Assistant' ? '- Emphasize business impact, strategic implications, and communication clarity.' : ''}
-${persona === 'Language Translator' ? '- Emphasize language nuance, cultural context, and translation accuracy.' : ''}
+${persona === "Technical Interviewer" ? "- Emphasize architecture decisions, Big-O complexity, trade-offs, and production concerns." : ""}
+${persona === "Executive Assistant" ? "- Emphasize business impact, strategic implications, and communication clarity." : ""}
+${persona === "Language Translator" ? "- Emphasize language nuance, cultural context, and translation accuracy." : ""}
 
 FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JSON.`;
-
-        // ── STEP 3: Generate Answer ────────────────────────────────────
         const chatModel = "llama-3.3-70b-versatile";
-        const chatParams: any = {
+        const chatParams = {
           messages: [
             { role: "system", content: chatSystemPrompt },
             { role: "user", content: `Question: ${transcript}` }
           ],
           model: chatModel,
           response_format: { type: "json_object" },
-          temperature: 0.4, // Lower = more accurate, less hallucination
+          temperature: 0.4
+          // Lower = more accurate, less hallucination
         };
-
         if (supportsLogprobs(chatModel)) {
           chatParams.logprobs = true;
         }
-
         const chatCompletion = await groq.chat.completions.create(chatParams);
-
-        let chatData: any = { sections: [] };
+        let chatData = { sections: [] };
         try {
           chatData = JSON.parse(chatCompletion.choices[0]?.message?.content || "{}");
         } catch {
           chatData = { sections: [] };
         }
-
-        // Compute confidence (logprob or self-estimation fallback)
-        let confidence = 1.0;
-        const tokens = (chatCompletion.choices[0] as any)?.logprobs?.content;
+        let confidence = 1;
+        const tokens = chatCompletion.choices[0]?.logprobs?.content;
         if (tokens && Array.isArray(tokens) && tokens.length > 0) {
-          const avgLogProb = tokens.reduce((s: number, t: any) => s + (t.logprob || 0), 0) / tokens.length;
+          const avgLogProb = tokens.reduce((s, t) => s + (t.logprob || 0), 0) / tokens.length;
           confidence = Math.exp(avgLogProb);
           console.log(`[Chat] Answer generated with logprob confidence: ${confidence.toFixed(2)}`);
         } else {
@@ -434,25 +392,23 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
             const confCompletion = await groq.chat.completions.create({
               model: "llama-3.1-8b-instant",
               messages: [
-                { role: "system", content: "You are evaluating the quality and correctness of an AI's answer to an interview question. Rate your confidence that the answer correctly and fully addresses the question. Output ONLY a JSON object: {\"confidence\": number} where the number is a float between 0.0 (completely wrong/irrelevant) and 1.0 (perfectly accurate/highly relevant)." },
-                { role: "user", content: `Question: ${transcript}\nAnswer: ${JSON.stringify(chatData)}` }
+                { role: "system", content: `You are evaluating the quality and correctness of an AI's answer to an interview question. Rate your confidence that the answer correctly and fully addresses the question. Output ONLY a JSON object: {"confidence": number} where the number is a float between 0.0 (completely wrong/irrelevant) and 1.0 (perfectly accurate/highly relevant).` },
+                { role: "user", content: `Question: ${transcript}
+Answer: ${JSON.stringify(chatData)}` }
               ],
               response_format: { type: "json_object" },
-              temperature: 0.1,
+              temperature: 0.1
             });
             const confData = JSON.parse(confCompletion.choices[0]?.message?.content || "{}");
-            if (typeof confData.confidence === 'number') {
+            if (typeof confData.confidence === "number") {
               confidence = confData.confidence;
               console.log(`[Chat] Answer generated with LLM self-confidence: ${confidence.toFixed(2)}`);
             }
           } catch {
-             console.log(`[Chat] Answer generated with default confidence: 1.0`);
+            console.log(`[Chat] Answer generated with default confidence: 1.0`);
           }
         }
-
-        // ── STEP 4: Self-Verification for hard/system_design questions ─
-        // Use logprobs trick: ONLY run verification if confidence is low (< 0.8)
-        if ((difficulty === 'hard' || questionType === 'system_design') && confidence < 0.8) {
+        if ((difficulty === "hard" || questionType === "system_design") && confidence < 0.8) {
           try {
             const verifyCompletion = await groq.chat.completions.create({
               messages: [
@@ -464,27 +420,28 @@ Return ONLY valid JSON: {"valid": boolean, "issues": ["issue description"], "imp
                 },
                 {
                   role: "user",
-                  content: `Original Question: ${transcript}\nGenerated Answer: ${JSON.stringify(chatData)}`
+                  content: `Original Question: ${transcript}
+Generated Answer: ${JSON.stringify(chatData)}`
                 }
               ],
-              model: "llama-3.1-8b-instant", // Fast + cheap for verification
+              model: "llama-3.1-8b-instant",
+              // Fast + cheap for verification
               response_format: { type: "json_object" },
-              temperature: 0.2,
+              temperature: 0.2
             });
-
-            let verifyData: any = { valid: true };
-            try { verifyData = JSON.parse(verifyCompletion.choices[0]?.message?.content || "{}"); } catch { }
-
+            let verifyData = { valid: true };
+            try {
+              verifyData = JSON.parse(verifyCompletion.choices[0]?.message?.content || "{}");
+            } catch {
+            }
             if (!verifyData.valid && Array.isArray(verifyData.improvedSections) && verifyData.improvedSections.length > 0) {
               chatData.sections = verifyData.improvedSections;
-              console.log(`[Verify] Fixed issues: ${verifyData.issues?.join(', ')}`);
+              console.log(`[Verify] Fixed issues: ${verifyData.issues?.join(", ")}`);
             }
-          } catch { /* use original answer if verification fails */ }
+          } catch {
+          }
         }
-
-        // ── STEP 5: Normalize + Return ─────────────────────────────────
         const sections = Array.isArray(chatData.sections) ? chatData.sections : [];
-        // Fallback: if model returned old-style explanation, wrap it
         if (sections.length === 0 && (chatData.explanation || chatData.answer)) {
           sections.push({
             title: "Answer",
@@ -492,23 +449,18 @@ Return ONLY valid JSON: {"valid": boolean, "issues": ["issue description"], "imp
             points: Array.isArray(chatData.bullets) ? chatData.bullets : []
           });
         }
-
         return res.json({
           isQuestion: true,
           question: transcript,
-          confidence: 1.0,
+          confidence: 1,
           type: questionType,
           difficulty,
           sections,
           code: chatData.code || "",
           codeLanguage: chatData.codeLanguage || chatData.language || "",
           bullets: [],
-          spoken: chatData.spoken || "",
+          spoken: chatData.spoken || ""
         });
-
-        // ════════════════════════════════════════════════════════════════
-        // VOICE MODE — Low Latency, High Signal Density
-        // ════════════════════════════════════════════════════════════════
       } else {
         const voiceSystemPrompt = `You are an AI assistant helping a candidate during a live interview.
 Analyze the transcript and determine if the interviewer asked a REAL interview question.
@@ -536,55 +488,51 @@ DETECTION RULES:
 - If it's just filler/pleasantries (e.g. "I can see your screen", "Let's get started"): isQuestion = false
 - If no question detected: isQuestion = false, return empty bullets array
 
-BULLET STYLE — TECHNICAL QUESTIONS:
+BULLET STYLE \u2014 TECHNICAL QUESTIONS:
 Include keyword-dense talking points with:
-• Algorithm or pattern name
-• Big-O complexity (e.g. O(n log n))
-• Key trade-offs
-• Production/edge case consideration
+\u2022 Algorithm or pattern name
+\u2022 Big-O complexity (e.g. O(n log n))
+\u2022 Key trade-offs
+\u2022 Production/edge case consideration
 Examples: "HashMap lookup O(1) average case" | "Avoid nested loops, use sorting O(n log n)" | "Handle null and empty input edge cases"
 
-BULLET STYLE — BEHAVIORAL QUESTIONS (STAR method):
-• Situation: what was the context?
-• Task: what was your responsibility?
-• Action: what did you specifically do?
-• Result: measurable outcome
+BULLET STYLE \u2014 BEHAVIORAL QUESTIONS (STAR method):
+\u2022 Situation: what was the context?
+\u2022 Task: what was your responsibility?
+\u2022 Action: what did you specifically do?
+\u2022 Result: measurable outcome
 Examples: "Legacy API slowed under heavy traffic" | "Led async processing refactor" | "Reduced latency by 60%" | "Improved reliability 99.9% uptime"
 
 SPOKEN FIELD: A confident, complete 1-2 sentence answer the user can say out loud immediately.
 
 CONTEXT:
-Resume: ${resume || 'Not provided'}
-Job Description: ${jd || 'Not provided'}
+Resume: ${resume || "Not provided"}
+Job Description: ${jd || "Not provided"}
 Persona: ${persona}
-${persona === 'Technical Interviewer' ? '\nFocus on engineering depth, Big-O complexity, and edge cases.' : ''}
-${persona === 'Executive Assistant' ? '\nFocus on business impact, decision making, and strategy.' : ''}
-${persona === 'Language Translator' ? '\nTranslate accurately while maintaining tone and cultural context.' : ''}
+${persona === "Technical Interviewer" ? "\nFocus on engineering depth, Big-O complexity, and edge cases." : ""}
+${persona === "Executive Assistant" ? "\nFocus on business impact, decision making, and strategy." : ""}
+${persona === "Language Translator" ? "\nTranslate accurately while maintaining tone and cultural context." : ""}
 
 Return ONLY JSON.`;
-
         const selectedVoiceModel = customModel || "llama-3.1-8b-instant";
-        const voiceParams: any = {
+        const voiceParams = {
           messages: [
             { role: "system", content: voiceSystemPrompt },
             { role: "user", content: `Transcript: "${transcript}"` }
           ],
           model: selectedVoiceModel,
           response_format: { type: "json_object" },
-          temperature: 0.3, // Low temperature = fast, accurate, deterministic
+          temperature: 0.3
+          // Low temperature = fast, accurate, deterministic
         };
-
         if (supportsLogprobs(selectedVoiceModel)) {
           voiceParams.logprobs = true;
         }
-
         const voiceCompletion = await groq.chat.completions.create(voiceParams);
-
-        // Calculate actual logprob confidence or use LLM self-estimation
-        const voiceTokens = (voiceCompletion.choices[0] as any)?.logprobs?.content;
+        const voiceTokens = voiceCompletion.choices[0]?.logprobs?.content;
         let logprobConfidence = -1;
         if (voiceTokens && Array.isArray(voiceTokens) && voiceTokens.length > 0) {
-          const avgLogProb = voiceTokens.reduce((s: number, t: any) => s + (t.logprob || 0), 0) / voiceTokens.length;
+          const avgLogProb = voiceTokens.reduce((s, t) => s + (t.logprob || 0), 0) / voiceTokens.length;
           logprobConfidence = Math.exp(avgLogProb);
           console.log(`[Voice] Question detection API completed with avg logprob confidence: ${logprobConfidence.toFixed(2)}`);
         } else {
@@ -592,63 +540,51 @@ Return ONLY JSON.`;
             const confCompletion = await groq.chat.completions.create({
               model: "llama-3.1-8b-instant",
               messages: [
-                { role: "system", content: "You are evaluating an audio transcript to determine if it contains a genuine interview question or just filler conversation. Rate your confidence that the transcript contains a real question. Return ONLY a JSON object: {\"confidence\": number} where the number is a float between 0.0 (definitely just filler/no question) and 1.0 (definitely a clear question)." },
+                { role: "system", content: 'You are evaluating an audio transcript to determine if it contains a genuine interview question or just filler conversation. Rate your confidence that the transcript contains a real question. Return ONLY a JSON object: {"confidence": number} where the number is a float between 0.0 (definitely just filler/no question) and 1.0 (definitely a clear question).' },
                 { role: "user", content: `Transcript: "${transcript}"` }
               ],
               response_format: { type: "json_object" },
-              temperature: 0.1,
+              temperature: 0.1
             });
             const confData = JSON.parse(confCompletion.choices[0]?.message?.content || "{}");
-            if (typeof confData.confidence === 'number') {
+            if (typeof confData.confidence === "number") {
               logprobConfidence = confData.confidence;
               console.log(`[Voice] Question detection API completed with LLM self-confidence: ${logprobConfidence.toFixed(2)}`);
             }
           } catch {
-             console.log(`[Voice] Question detection API fallback to default confidence`);
+            console.log(`[Voice] Question detection API fallback to default confidence`);
           }
         }
-
-        let voiceData: any = { isQuestion: false };
+        let voiceData = { isQuestion: false };
         try {
           voiceData = JSON.parse(voiceCompletion.choices[0]?.message?.content || "{}");
-          
           if (logprobConfidence >= 0) {
-            voiceData.confidence = logprobConfidence; // Override self-reported LLM confidence
+            voiceData.confidence = logprobConfidence;
           }
         } catch {
           voiceData = { isQuestion: false };
         }
-        
-        // Anti-hallucination guard
         if (voiceData.isQuestion && voiceData.confidence < 0.2) {
-           console.log(`[Voice] Rejected question due to low confidence (< 0.2)`);
-           voiceData.isQuestion = false;
+          console.log(`[Voice] Rejected question due to low confidence (< 0.2)`);
+          voiceData.isQuestion = false;
         }
-        
         return res.json(voiceData);
       }
-
-    } catch (error: any) {
+    } catch (error) {
       console.error("Analysis error:", error);
       res.status(500).json({ error: error.message || "Analysis failed" });
     }
   });
-
-  // Background Cache Generator Endpoint
   app.post("/api/generate-cache", async (req, res) => {
-    const customKey = req.headers['x-api-key'] as string;
+    const customKey = req.headers["x-api-key"];
     const { jd, resume } = req.body;
-
     if (!jd || jd.length < 50) {
       console.log("[Cache] JD too short or missing. Skipping.");
       return res.status(400).json({ status: "JD too short" });
     }
-
     try {
       const groq = getGroq(customKey);
       console.log("[Cache] Starting pre-interview cache generation...");
-
-      // Step 1: Generate Questions
       const questionsCompletion = await groq.chat.completions.create({
         messages: [
           {
@@ -664,27 +600,25 @@ Return ONLY a valid JSON object matching this exact schema:
   ]
 }`
           },
-          { role: "user", content: `Job Description:\n${jd}` }
+          { role: "user", content: `Job Description:
+${jd}` }
         ],
         model: "llama-3.1-8b-instant",
         response_format: { type: "json_object" },
-        temperature: 0.3,
+        temperature: 0.3
       });
-
-      let data: any = {};
-      try { data = JSON.parse(questionsCompletion.choices[0]?.message?.content || "{}"); } catch {}
-      const questions: string[] = Array.isArray(data.questions) ? data.questions : [];
-      
+      let data = {};
+      try {
+        data = JSON.parse(questionsCompletion.choices[0]?.message?.content || "{}");
+      } catch {
+      }
+      const questions = Array.isArray(data.questions) ? data.questions : [];
       if (questions.length === 0) {
         console.log("[Cache] Failed to generate questions array.");
         return;
       }
-      
       console.log(`[Cache] Found ${questions.length} questions. Generating answers & embeddings...`);
-      vectorCache = []; // clear old cache
-
-      // Step 2: Generate Answers & Embeddings
-      // Run sequentially to keep Groq happy, but fast because 8b model
+      vectorCache = [];
       const systemPrompt = `You are a senior software engineer and interview coach.
 Answer the interview question comprehensively. Ensure you provide paraphrased variants of the question to assist vector similarity searching.
 Return ONLY valid JSON matching exactly:
@@ -710,93 +644,78 @@ RULES:
 1. "code" MUST ALWAYS be a string. Never null. Always use "" for empty code.
 2. "difficulty" MUST ALWAYS be included exactly as "easy", "medium", or "hard".
 3. "variants" MUST include at least 2 conversational variations of the question.`;
-
       for (const q of questions) {
-         try {
-            const ansCompletion = await groq.chat.completions.create({
-              messages: [
-                 { role: "system", content: systemPrompt },
-                 { role: "user", content: `Question: ${q}\n\nResume Context: ${resume || 'None'}\nJob Context: ${jd.substring(0, 1000)}` }
-              ],
-              model: "llama-3.1-8b-instant", // Using 8b for bulk speed
-              response_format: { type: "json_object" },
-              temperature: 0.2, // Deterministic
-            });
+        try {
+          const ansCompletion = await groq.chat.completions.create({
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: `Question: ${q}
 
-            let answerJson = JSON.parse(ansCompletion.choices[0]?.message?.content || "{}");
-            
-            // Standardize code and difficulty fallbacks mapping natively
-            if (answerJson.code === null || answerJson.code === undefined) answerJson.code = "";
-            if (!answerJson.difficulty) answerJson.difficulty = "medium";
-            
-            // Extract variants and generate embeddings
-            const variants = Array.isArray(answerJson.variants) ? answerJson.variants : [];
-            delete answerJson.variants; // Remove from answers to keep structure clean
-            
-            const variantEmbeddings: number[][] = [];
-            for (const variant of variants) {
-                if (typeof variant === 'string' && variant.trim().length > 5) {
-                    const varEmb = await getEmbedding(variant);
-                    variantEmbeddings.push(varEmb);
-                }
+Resume Context: ${resume || "None"}
+Job Context: ${jd.substring(0, 1e3)}` }
+            ],
+            model: "llama-3.1-8b-instant",
+            // Using 8b for bulk speed
+            response_format: { type: "json_object" },
+            temperature: 0.2
+            // Deterministic
+          });
+          let answerJson = JSON.parse(ansCompletion.choices[0]?.message?.content || "{}");
+          if (answerJson.code === null || answerJson.code === void 0) answerJson.code = "";
+          if (!answerJson.difficulty) answerJson.difficulty = "medium";
+          const variants = Array.isArray(answerJson.variants) ? answerJson.variants : [];
+          delete answerJson.variants;
+          const variantEmbeddings = [];
+          for (const variant of variants) {
+            if (typeof variant === "string" && variant.trim().length > 5) {
+              const varEmb = await getEmbedding(variant);
+              variantEmbeddings.push(varEmb);
             }
-
-            // Create a single unique entry for the MAIN QUESTION + VARIANTS
-            const emb = await getEmbedding(q);
-            vectorCache.push({
-               id: Math.random().toString(36).substring(7),
-               question: q,
-               embeddingModel: "all-MiniLM-L6-v2",
-               embedding: emb,
-               variants: variants,
-               variantEmbeddings: variantEmbeddings,
-               answer: answerJson
-            });
-
-            console.log(`[Cache] Pre-generated: ${q.substring(0, 45)}... with ${variants.length} variations`);
-         } catch(e) {
-           console.log(`[Cache] Skipped individual generation for: ${q}`);
-         }
+          }
+          const emb = await getEmbedding(q);
+          vectorCache.push({
+            id: Math.random().toString(36).substring(7),
+            question: q,
+            embeddingModel: "all-MiniLM-L6-v2",
+            embedding: emb,
+            variants,
+            variantEmbeddings,
+            answer: answerJson
+          });
+          console.log(`[Cache] Pre-generated: ${q.substring(0, 45)}... with ${variants.length} variations`);
+        } catch (e) {
+          console.log(`[Cache] Skipped individual generation for: ${q}`);
+        }
       }
-
-      // Step 3: Write out buffer to cache file
-      fs.writeFileSync(CACHE_FILE, JSON.stringify(vectorCache));
+      import_fs.default.writeFileSync(CACHE_FILE, JSON.stringify(vectorCache));
       console.log(`[Cache] Success! ${vectorCache.length} questions are now primed natively in vector cache.`);
-      
-      // Return success response to frontend
       res.json({ status: `Successfully cached ${vectorCache.length} questions!` });
-    } catch(err: any) {
+    } catch (err) {
       console.error("[Cache] Background generation failed pipeline:", err);
       res.status(500).json({ status: "Generation failed", error: err.message });
     }
   });
-
-
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== 'production') {
-    const viteModule = await import('vite');
+  if (process.env.NODE_ENV !== "production") {
+    const viteModule = await import("vite");
     const vite = await viteModule.createServer({
       server: { middlewareMode: true },
-      appType: 'spa',
+      appType: "spa"
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    
-    // SPA Fallback for React Router
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    const distPath = import_path.default.join(__dirname, "dist");
+    app.use(import_express.default.static(distPath));
+    app.get("*", (req, res) => {
+      res.sendFile(import_path.default.join(distPath, "index.html"));
     });
   }
-
   return new Promise((resolve) => {
-    const startListen = (port: number) => {
-      httpServer.listen(port, '0.0.0.0', () => {
+    const startListen = (port) => {
+      httpServer.listen(port, "0.0.0.0", () => {
         console.log(`Server running on http://localhost:${port}`);
         resolve(port);
-      }).on('error', (err: any) => {
-        if (err.code === 'EADDRINUSE') {
+      }).on("error", (err) => {
+        if (err.code === "EADDRINUSE") {
           console.warn(`[Server] Port ${port} is in use, trying ${port + 1}...`);
           startListen(port + 1);
         } else {
@@ -807,6 +726,10 @@ RULES:
     startListen(initialPort);
   });
 }
-
-// Always start in dev script
-startServer().catch(console.error);
+if (typeof require !== "undefined" && require.main === module) {
+  startServer().catch(console.error);
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  startServer
+});

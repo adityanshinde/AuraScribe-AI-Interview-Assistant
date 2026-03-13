@@ -8,15 +8,15 @@ if (process.platform === 'darwin') {
 
 app.name = 'AuraScribe';
 
+let win = null;
+
 function createWindow() {
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     width: 480,
     height: 750,
-    minWidth: 350,
     minHeight: 500,
     resizable: true,
     alwaysOnTop: true,
-    skipTaskbar: true,       // Invisible in Taskbar / Alt+Tab
     transparent: true,
     frame: false,
     hasShadow: true,
@@ -75,13 +75,40 @@ function createWindow() {
     callback(true);
   });
 
-  win.loadURL('http://localhost:3000');
+  // ============================================================
+  // START BACKEND DURING PACKAGED INJECTIONS
+  // ============================================================
+  if (app.isPackaged) {
+    process.env.NODE_ENV = 'production'; // signal server to serve Vite Dist instead of HMR
+    const serverModule = require(path.join(__dirname, '../server.cjs')); 
+    if (serverModule && serverModule.startServer) {
+        serverModule.startServer().then((port) => {
+            win.loadURL(`http://localhost:${port}`);
+        }).catch(err => {
+            console.error("Failed to start embedded Node server:", err);
+        });
+    } else {
+        win.loadURL('http://localhost:3000');
+    }
+  } else {
+      win.loadURL('http://localhost:3000');
+  }
 
   // ============================================================
   // IPC: UI controls
   // ============================================================
   ipcMain.on('set-always-on-top', (event, flag) => {
     win.setAlwaysOnTop(flag, 'screen-saver');
+  });
+
+  ipcMain.on('set-skip-taskbar', (event, flag) => {
+    win.setSkipTaskbar(flag);
+    console.log('[Stealth] Taskbar hidden:', flag);
+  });
+
+  ipcMain.on('set-stealth-mode', (event, flag) => {
+    win.setContentProtection(flag); 
+    console.log('[Stealth] Content protection:', flag);
   });
 
   ipcMain.on('update-hotkeys', (event, hotkeys) => {
@@ -137,14 +164,29 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+const gotTheLock = app.requestSingleInstanceLock();
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-});
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    // Someone tried to run a second instance, focus our existing window instead.
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      if (!win.isVisible()) win.show();
+      win.focus();
+    }
+  });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
+  app.whenReady().then(createWindow);
+
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
+}

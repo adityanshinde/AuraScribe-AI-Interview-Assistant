@@ -155,8 +155,8 @@ GROQ_API_KEY=your_groq_api_key_here
 
 ## ▶️ Running AuraScribe
 
-### Web Version (Browser)
-Best for Google Meet, browser-based interviews.
+### 1️⃣ Run for Development (Browser)
+Best for quick testing UI changes or browser-based interviews (Google Meet).
 
 ```bash
 npm run dev
@@ -166,16 +166,27 @@ Open `http://localhost:3000` in your browser.
 
 > ⚠️ When starting a Voice session: check **"Also share tab audio"** in the browser capture dialog.
 
-### Desktop Version (Electron)
-Most powerful — captures system-wide audio from Zoom, Teams, Slack, any app.
+### 2️⃣ Run as Desktop App (Local Dev)
+Most powerful — captures system-wide audio from Zoom, Teams, Slack, any app. Runs the Node backend and Electron wrapper simultaneously.
 
 ```bash
 npm run electron:dev
 ```
 
-This starts the backend server AND the Electron overlay simultaneously via `concurrently`.
+### 3️⃣ Generate Native `.exe` Installer (Production)
+To package AuraScribe into a standalone, installable `.exe` file that works on any Windows device without needing Node.js, code editors, or a terminal:
 
-> The server now uses `tsx watch` — it **auto-reloads** when you edit `server.ts`.
+```bash
+npm run dist
+```
+
+**What happens during the build pipeline?**
+1. **`build:ui`**: Compiles the React frontend via Vite.
+2. **`build:server`**: Bundles the `server.ts` Node backend using `tsup` into a lightweight, standalone `server.cjs` script.
+3. **`electron-builder`**: Wraps the UI, the compiled Node backend, and the Electron browser engine into a single unified NSIS installer block.
+
+Once the terminal process finishes (it usually takes 2-3 minutes to download the initial Electron binaries), you will find the setup file located exactly here: 
+👉 `release/AuraScribe Setup 0.0.0.exe`
 
 ---
 

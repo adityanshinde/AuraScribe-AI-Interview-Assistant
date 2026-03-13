@@ -1,0 +1,18 @@
+
+(node:32148) UnhandledPromiseRejectionWarning: Error: Cannot find module 'vite'
+Require stack:
+- C:\Aditya Dev Backup\Personal\Parakeet-AI-Clone\release\win-unpacked\resources\app.asar\server.cjs
+- C:\Aditya Dev Backup\Personal\Parakeet-AI-Clone\release\win-unpacked\resources\app.asar\electron\main.cjs
+- 
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1463:15)
+    at s._resolveFilename (node:electron/js2c/browser_init:2:140362)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1073:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1078:22)
+    at Module._load (node:internal/modules/cjs/loader:1249:25)
+    at c._load (node:electron/js2c/node_init:2:17999)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:262:19)
+    at Module.require (node:internal/modules/cjs/loader:1563:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (C:\Aditya Dev Backup\Personal\Parakeet-AI-Clone\release\win-unpacked\resources\app.asar\server.cjs:26:19)
+(Use `AuraScribe --trace-warnings ...` to show where the warning was created)
+(node:32148) UnhandledPromiseRejectionWarning: Unhandled promise rejection. This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode). (rejection id: 1)
