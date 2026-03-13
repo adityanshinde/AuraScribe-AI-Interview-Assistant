@@ -375,7 +375,7 @@ JSON SCHEMA (match exactly):
   "sections": [
     {
       "title": "Short section title (2-5 words)",
-      "content": "2-4 sentences explaining this section clearly. Use confident first-person tone (I typically... / In my experience...). NO bullet points inside content.",
+      "content": "2-4 sentences explaining this clearly in a confident, narrative first-person tone. Vary your openers (e.g., 'In my projects...', 'I've found that...', 'Architecturally, I prefer...', 'One thing I prioritize is...'). Avoid repeating 'I typically' or 'In my experience' at the start of every paragraph. NO bullet points inside content.",
       "points": [
         "Short key takeaway (max 12 words)",
         "Short key takeaway (max 12 words)"
@@ -699,7 +699,7 @@ Return ONLY valid JSON matching exactly:
   "sections": [
     {
       "title": "Short section title (2-5 words)",
-      "content": "2-4 sentences explaining this gracefully in first-person.",
+      "content": "2-4 sentences explaining this clearly in a confident, narrative first-person tone. Vary your openers (e.g., 'In my projects...', 'I've found that...', 'Architecturally, I prefer...', 'One thing I prioritize is...'). Avoid repeating 'I typically' or 'In my experience' at the start of every paragraph.",
       "points": ["Scannable key takeaway max 10 words", "Another short takeaway"]
     }
   ],

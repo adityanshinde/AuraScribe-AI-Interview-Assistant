@@ -13,15 +13,15 @@ let win = null;
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 480,
-    height: 750,
+    width: 600,
+    height: 800,
+    minWidth: 400,
     minHeight: 500,
     resizable: true,
     alwaysOnTop: true,
     transparent: true,
-    frame: false,
+    frame: true,
     hasShadow: true,
-    type: 'toolbar',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -134,6 +134,25 @@ function createWindow() {
   ipcMain.on('set-stealth-mode', (event, flag) => {
     win.setContentProtection(flag);
     console.log('[Stealth] Content protection:', flag);
+  });
+
+  ipcMain.on('close-app', () => {
+    console.log('[App] Exit signal received. Terminating process...');
+    app.exit(0);
+    process.exit(0);
+  });
+  
+  ipcMain.on('QUIT_NOW', () => {
+    console.log('[App] Hard QUIT requested.');
+    app.exit(0);
+    process.exit(0);
+  });
+
+  // Emergency Global Quit Shortcut
+  globalShortcut.register('CommandOrControl+Q', () => {
+    console.log('[App] Global Quit hotkey triggered.');
+    app.exit(0);
+    process.exit(0);
   });
 
   ipcMain.on('update-hotkeys', (event, hotkeys) => {

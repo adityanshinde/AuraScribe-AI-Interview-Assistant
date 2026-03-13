@@ -22,6 +22,21 @@ html, body, #root {
   -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
 }
 
+/* Frameless Resize Hack: Leave 4px non-draggable edge */
+.resize-border {
+  padding: 4px;
+  background: transparent;
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+@media (max-width: 500px) {
+  .hide-sm {
+    display: none !important;
+  }
+}
+
 /* Custom Scrollbar for a cleaner look */
 ::-webkit-scrollbar {
   width: 4px;

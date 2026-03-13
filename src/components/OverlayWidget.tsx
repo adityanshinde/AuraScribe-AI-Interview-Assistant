@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, X, Settings, Sparkles, Zap, Activity, Minimize2, Maximize2, Pin, PinOff, History, Download, EyeOff, Keyboard, MessageSquare, Send, AlertTriangle, CheckCircle, Monitor } from 'lucide-react';
+import { Mic, MicOff, X, Settings, Sparkles, Zap, Activity, Minimize2, Maximize2, Pin, PinOff, History, Download, EyeOff, Keyboard, MessageSquare, Send, AlertTriangle, CheckCircle, Monitor, Trash2, ChevronDown, Move, Star, Loader2 } from 'lucide-react';
 import { useTabAudioCapture } from '../hooks/useTabAudioCapture';
 import { useAIAssistant } from '../hooks/useAIAssistant';
 import { Visualizer } from './Visualizer';
@@ -7,7 +7,25 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
 // Electron IPC helper
-const ipc = (window as any).require ? (window as any).require('electron').ipcRenderer : null;
+// Reliable Electron IPC detection for both Dev/Prod
+let ipc: any = null;
+if (typeof window !== 'undefined') {
+  const win = window as any;
+  if (win.require) {
+    try {
+      ipc = win.require('electron').ipcRenderer;
+    } catch (e) {
+      console.warn("Electron IPC not found via require", e);
+    }
+  }
+  // Try direct access if exposed
+  if (!ipc && win.electron && win.electron.ipcRenderer) {
+    ipc = win.electron.ipcRenderer;
+  }
+  if (!ipc && win.ipcRenderer) {
+    ipc = win.ipcRenderer;
+  }
+}
 
 export function cn(...inputs: (string | undefined | null | false)[]) {
   return twMerge(clsx(inputs));
@@ -62,6 +80,8 @@ export default function OverlayWidget() {
   const [generateResult, setGenerateResult] = useState<{ status: string; isError?: boolean } | null>(null);
   const [appAlert, setAppAlert] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null);
   const [screenSources, setScreenSources] = useState<{id: string, name: string, thumbnail: string}[] | null>(null);
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
+  const [elapsedTime, setElapsedTime] = useState('00:00');
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   const showAlert = React.useCallback((message: string, type: 'error'|'success'|'info' = 'info') => {
@@ -69,8 +89,12 @@ export default function OverlayWidget() {
     setTimeout(() => setAppAlert(null), 4000);
   }, []);
 
-  const { detectedQuestion, answer, isProcessing, processTranscript, askQuestion, resetAssistant } = useAIAssistant(undefined, (msg) => showAlert(msg, 'error'));
-  const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture(processTranscript, (msg) => showAlert(msg, 'error'));
+  const { detectedQuestion, answer, isProcessing, askQuestion, resetAssistant } = useAIAssistant(undefined, (msg) => showAlert(msg, 'error'));
+  // Ensure we pass a callback that actually triggers an update if needed, but the hook holds its own state
+  const { isListening, isRateLimited, transcript, startListening, stopListening, clearTranscript, stream } = useTabAudioCapture((text) => {
+    // We could do secondary handling here, but the transcript state is already enough for the UI
+    console.log('Voice caught:', text);
+  }, (msg) => showAlert(msg, 'error'));
 
   const handleChatSubmit = async () => {
     const q = chatInput.trim();
@@ -251,19 +275,35 @@ export default function OverlayWidget() {
   const toggleListen = async () => {
     if (isListening) {
       stopListening();
-      // Re-enable click-through after stopping
+      setSessionStartTime(null);
       ipc?.send('chat-input-blurred');
     } else {
-      // Temporarily disable click-through so getDisplayMedia sees a real user gesture
       ipc?.send('chat-input-focused');
       try {
         await startListening();
+        setSessionStartTime(Date.now());
       } catch (e) {
         console.error('Start listening failed:', e);
       }
-      // Re-enable click-through after the stream is attached
       ipc?.send('chat-input-blurred');
     }
+  };
+
+  useEffect(() => {
+    if (!sessionStartTime || !isListening) return;
+    const interval = setInterval(() => {
+      const diff = Math.floor((Date.now() - sessionStartTime) / 1000);
+      const m = Math.floor(diff / 60).toString().padStart(2, '0');
+      const s = (diff % 60).toString().padStart(2, '0');
+      setElapsedTime(`${m}:${s}`);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sessionStartTime, isListening]);
+
+  const handleAIHelp = async () => {
+    if (!transcript.trim() || isProcessing) return;
+    // Just trigger the analysis on the current accumulated transcript
+    await askQuestion(transcript);
   };
 
   const toggleAlwaysOnTop = () => {
@@ -305,10 +345,11 @@ export default function OverlayWidget() {
   return (
     <div
       className={cn(
-        "p-2 flex flex-col font-sans relative group transition-all duration-500 ease-in-out",
-        isHidden ? "h-14 w-14" : isMiniMode ? "h-[180px] w-[350px]" : "h-full w-full"
+        "flex flex-col font-sans relative group transition-all duration-500 ease-in-out resize-border pointer-events-none",
+        isHidden ? "h-14 w-14" : "h-full w-full",
+        !isHidden && "pointer-events-auto"
       )}
-      style={{ opacity: opacity / 100 }}
+      style={{ opacity: opacity / 100, webkitAppRegion: !isHidden ? 'no-drag' : 'none' } as any}
     >
       {/* Global Toast Alert */}
       {appAlert && (
@@ -336,55 +377,92 @@ export default function OverlayWidget() {
           </div>
         </button>
       ) : (
-        <div className="flex-1 bg-[#0a0a0a]/90 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.5)] flex flex-col overflow-hidden text-slate-200 relative">
+        <div className="flex-1 bg-[#0a0a0a]/95 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-[0_0_40px_rgba(0,0,0,0.6)] flex flex-col overflow-hidden text-slate-200 relative">
 
-          {/* Header (Draggable via Electron) */}
-          <div className="drag-region h-12 flex items-center justify-between px-4 border-b border-white/5 bg-white/[0.02] shrink-0">
-            <div className="flex items-center gap-2.5">
-              <div className="w-5 h-5 flex items-center justify-center overflow-hidden drop-shadow-[0_0_5px_rgba(34,211,238,0.5)]">
-                <img src="/icon.png" alt="AuraScribe" className="w-full h-full object-contain" />
-              </div>
-              <span className="font-semibold text-sm tracking-wide text-white/90">AuraScribe</span>
+          {/* Header (Parakeet Styled) */}
+          <div className="drag-region h-[56px] flex items-center justify-between px-3 border-b border-white/5 bg-white/[0.01] shrink-0 gap-2">
+            <div className="flex items-center gap-2 no-drag shrink-0 pr-2 border-r border-white/5">
+               <div className="w-7 h-7 flex items-center justify-center p-1 bg-gradient-to-br from-cyan-500/20 to-blue-500/20 rounded-lg border border-white/10">
+                 <img src="/icon.png" alt="PS" className="w-full h-full object-contain" />
+               </div>
+               <div className="flex flex-col hide-sm">
+                 <span className="font-black text-[11px] tracking-tight text-white/90 leading-tight">AuraScribe</span>
+                 {isListening && <span className="text-[8px] font-bold text-red-500 animate-pulse uppercase leading-none">Recording</span>}
+               </div>
             </div>
-            <div className="flex gap-2 no-drag items-center">
+
+            <div className="flex items-center gap-1.5 no-drag flex-1 justify-center px-1">
+              {/* AI Help */}
               <button
-                onClick={() => setIsHidden(true)}
-                title="Hide to Bubble (Ctrl+Shift+H)"
-                className="p-1.5 hover:bg-white/5 rounded-md transition-colors text-slate-400 hover:text-white"
+                onClick={handleAIHelp}
+                disabled={!isListening || isProcessing}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-black transition-all border shrink-0",
+                  isProcessing 
+                    ? "bg-cyan-500/20 border-cyan-500/50 text-cyan-400 animate-pulse shadow-[0_0_10px_rgba(34,211,238,0.2)]"
+                    : isListening 
+                      ? "bg-black/80 border-white/20 text-white hover:bg-white hover:text-black hover:border-white shadow-lg"
+                      : "bg-white/5 border-transparent text-slate-700 cursor-not-allowed"
+                )}
               >
-                <EyeOff size={14} />
+                <Sparkles size={13} className={isProcessing ? "animate-spin" : ""} />
+                <span className="hide-sm">AI Help</span>
               </button>
 
+              {/* Chat Button */}
               <button
-                onClick={() => setShowHistory(!showHistory)}
-                title="Session History"
-                className={cn("p-1.5 hover:bg-white/5 rounded-md transition-colors", showHistory && "text-cyan-400")}
+                onClick={() => setActiveTab(activeTab === 'chat' ? 'voice' : 'chat')}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-black transition-all border shrink-0 shadow-lg",
+                  activeTab === 'chat'
+                    ? "bg-white text-black border-white"
+                    : "bg-black/80 border-white/20 text-white hover:bg-white/10"
+                )}
               >
-                <History size={14} />
+                <MessageSquare size={13} />
+                <span className="hide-sm">Chat</span>
               </button>
+            </div>
+
+            <div className="flex gap-1.5 no-drag items-center shrink-0 pl-2 border-l border-white/5">
+              {isListening && (
+                <span className="text-[10px] font-mono text-cyan-400/80 font-black px-1.5 hide-sm">{elapsedTime}</span>
+              )}
 
               <button
-                onClick={toggleAlwaysOnTop}
-                title={isAlwaysOnTop ? "Disable Always on Top" : "Enable Always on Top"}
-                className="p-1.5 hover:bg-white/5 rounded-md transition-colors"
-              >
-                {isAlwaysOnTop ? <Pin size={14} className="text-cyan-400" /> : <PinOff size={14} className="text-slate-400" />}
-              </button>
-
-              <button
-                onClick={() => setIsMiniMode(!isMiniMode)}
-                title={isMiniMode ? "Exit Mini Mode" : "Enter Mini Mode"}
-                className="p-1.5 hover:bg-white/5 rounded-md transition-colors"
-              >
-                {isMiniMode ? <Maximize2 size={14} className="text-slate-400" /> : <Minimize2 size={14} className="text-slate-400" />}
-              </button>
-
-              <Settings
-                size={14}
-                className={cn("cursor-pointer transition-colors p-0.5", showSettings ? "text-cyan-400" : "text-slate-400 hover:text-white")}
                 onClick={() => setShowSettings(!showSettings)}
-              />
-              <X size={16} className="text-slate-400 hover:text-white cursor-pointer transition-colors" onClick={() => window.close()} />
+                className={cn("p-1.5 rounded-lg transition-all", showSettings ? "bg-cyan-500 text-black shadow-[0_0_15px_rgba(34,211,238,0.4)]" : "text-white/40 hover:text-white hover:bg-white/5")}
+                title="Settings"
+              >
+                <Settings size={14} />
+              </button>
+
+              <button 
+                onClick={toggleListen}
+                className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-xl",
+                  isListening ? "bg-red-500 text-white hover:bg-red-400" : "bg-white text-black hover:bg-slate-200"
+                )}
+                title={isListening ? "Stop Capturing" : "Start Capturing"}
+              >
+                 {isListening ? <MicOff size={14} /> : <Mic size={14} />}
+              </button>
+
+              <button 
+                onClick={() => {
+                  console.log('Triggering Hard Exit...');
+                  if (ipc) {
+                    ipc.send('QUIT_NOW');
+                    ipc.send('close-app');
+                  }
+                  // Final direct fallback - should trigger window-all-closed in main
+                  window.close();
+                }}
+                className="p-1.5 px-2 rounded-lg transition-all text-white/50 hover:text-white hover:bg-red-600 active:scale-90 group/exit shadow-lg"
+                title="Force Close AuraScribe"
+              >
+                 <X size={20} strokeWidth={3} className="transition-transform group-hover/exit:rotate-90" />
+              </button>
             </div>
           </div>
 
@@ -656,83 +734,32 @@ export default function OverlayWidget() {
               </div>
             ) : (
               <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Tab Bar */}
-                <div className="px-4 pt-2 border-b border-white/5 bg-black/20 flex items-center justify-between no-drag shrink-0">
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => setActiveTab('voice')}
-                      className={cn(
-                        "flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[11px] font-bold uppercase tracking-wider transition-all border-b-2",
-                        activeTab === 'voice'
-                          ? "text-white border-cyan-400 bg-white/[0.04]"
-                          : "text-slate-500 border-transparent hover:text-slate-300"
-                      )}
-                    >
-                      <Mic size={10} /> Voice
-                    </button>
-                    <button
-                      onClick={() => setActiveTab('chat')}
-                      className={cn(
-                        "flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-[11px] font-bold uppercase tracking-wider transition-all border-b-2",
-                        activeTab === 'chat'
-                          ? "text-white border-cyan-400 bg-white/[0.04]"
-                          : "text-slate-500 border-transparent hover:text-slate-300"
-                      )}
-                    >
-                      <MessageSquare size={10} /> Chat
-                    </button>
+                {/* Content Sections Container */}
+                <div className="px-4 pt-1 flex items-center justify-between no-drag shrink-0 bg-transparent">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                       <Mic size={12} className={cn(isListening ? "text-red-400" : "text-slate-500")} />
+                       <span className="text-[10px] uppercase font-bold tracking-widest text-slate-500">Live Session</span>
+                    </div>
                   </div>
-
-                  {/* Right-side controls — only show voice controls on voice tab */}
-                  <div className="flex items-center gap-3 pb-1">
-                    {activeTab === 'voice' ? (
-                      <>
-                        <div className="flex items-center gap-2">
-                          {isRateLimited ? (
-                            <span className="relative flex h-2 w-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                            </span>
-                          ) : isListening ? (
-                            <span className="relative flex h-2 w-2">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                            </span>
-                          ) : (
-                            <div className="h-2 w-2 rounded-full bg-slate-600" />
-                          )}
-                          <span className="text-[10px] text-slate-500">
-                            {isRateLimited ? (
-                              <span className="text-amber-400 animate-pulse">Rate Limited</span>
-                            ) : isListening ? 'Live' : 'Idle'}
+                  
+                  <div className="flex items-center gap-3">
+                    {isListening && (
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
+                          {isRateLimited && <div className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />}
+                          <span className="text-[9px] text-slate-500 font-bold uppercase tracking-tighter">
+                            {isRateLimited ? 'Rate Limited' : 'Recording...'}
                           </span>
                         </div>
-                        <button
-                          onClick={handleClear}
-                          className="text-[10px] font-bold text-slate-500 hover:text-white transition-colors uppercase tracking-wider"
-                        >
-                          Clear
-                        </button>
-                        <button
-                          onClick={toggleListen}
-                          className={cn(
-                            "px-3 py-1 rounded-full text-[10px] font-bold transition-all duration-300",
-                            isListening
-                              ? "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
-                              : "bg-white text-black hover:bg-slate-200 shadow-[0_0_15px_rgba(255,255,255,0.15)]"
-                          )}
-                        >
-                          {isListening ? 'Stop' : 'Start'}
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={handleClear}
-                        className="text-[10px] font-bold text-slate-500 hover:text-white transition-colors uppercase tracking-wider pb-0.5"
-                      >
-                        Clear
-                      </button>
+                      </div>
                     )}
+                    <button
+                      onClick={handleClear}
+                      className="text-[10px] font-bold text-slate-600 hover:text-white transition-colors uppercase tracking-widest bg-white/5 px-3 py-1 rounded-md"
+                    >
+                      Reset
+                    </button>
                   </div>
                 </div>
 
@@ -951,101 +978,98 @@ export default function OverlayWidget() {
                   /* Full Mode Content */
                   <>
                     {/* Transcript Area (Top Half) */}
-                    <div className="flex-[0.8] p-5 flex flex-col gap-3 overflow-hidden border-b border-white/5 no-drag bg-white/[0.01] relative">
-                      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center justify-between">
-                        <div className="flex items-center gap-2"><Mic size={10} /> Live Transcript</div>
-                        {isListening && <div className="w-24 h-4"><Visualizer stream={stream} isListening={isListening} /></div>}
+                    <div className="flex-[0.6] flex flex-col overflow-hidden bg-black/20 border-b border-white/5 no-drag group/trans relative">
+                      {/* Transcript Action Bar (Matches Parakeet) */}
+                      <div className="flex items-center justify-between px-4 py-2 bg-white/[0.02]">
+                         <div className="flex-1 overflow-hidden pr-4">
+                            <div className="text-xs text-slate-300 font-medium truncate italic opacity-80">
+                               {transcript || "Speak to start capturing..."}
+                            </div>
+                         </div>
+                         <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={handleClear} className="p-1.5 hover:bg-white/5 rounded text-slate-500 hover:text-white transition-colors" title="Clear">
+                               <Trash2 size={13} />
+                            </button>
+                            <button className="p-1.5 hover:bg-white/5 rounded text-slate-500 hover:text-white transition-colors">
+                               <ChevronDown size={13} />
+                            </button>
+                            <button className="p-1.5 hover:bg-white/5 rounded text-slate-500 hover:text-white transition-colors">
+                               <X size={13} />
+                            </button>
+                         </div>
                       </div>
-                      <div className="flex-1 overflow-y-auto text-sm text-slate-300 font-mono leading-relaxed pr-2 mask-fade-out">
+                      
+                      <div className="flex-1 p-4 overflow-y-auto text-sm text-slate-400 font-mono leading-relaxed bg-black/10">
                         {transcript ? (
                           <span>{transcript}</span>
                         ) : (
-                          <span className="italic text-slate-600">Waiting for speech...</span>
+                          <div className="flex items-center gap-2 text-slate-600 italic">
+                             <Activity size={12} className={isListening ? "animate-pulse" : ""} />
+                             Waiting for audio input...
+                          </div>
                         )}
                       </div>
                     </div>
 
-                    {/* AI Copilot Area (Bottom Half) */}
-                    <div className="flex-[1.2] p-5 bg-gradient-to-b from-indigo-900/10 to-transparent flex flex-col gap-4 overflow-y-auto no-drag">
-                      <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <Zap size={10} className={cn(isProcessing ? "text-cyan-400 animate-pulse" : "text-cyan-400")} />
-                          AI Copilot
-                          {isProcessing && (
-                            <div className="flex items-center gap-1.5 ml-2">
-                              <span className="flex h-1.5 w-1.5 relative">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
-                              </span>
-                              <span className="animate-pulse text-cyan-300/70 text-[9px] font-medium normal-case tracking-normal">Aura is thinking...</span>
+                    {/* AI Copilot Area (Bottom Half) - Parakeet Styled Answer UI */}
+                    <div className="flex-1 p-5 overflow-y-auto no-drag bg-gradient-to-b from-[#111111] to-black scrollbar-hide">
+                      {isProcessing && !answer && (
+                        <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                          {transcript && (
+                            <div className="flex items-start gap-2.5">
+                               <MessageSquare size={16} className="text-white mt-0.5 shrink-0" />
+                               <div className="text-[15px] font-bold text-white leading-snug">
+                                  {transcript.slice(-120)}
+                               </div>
                             </div>
                           )}
-                        </div>
-                        {answer && (
-                          <button
-                            onClick={() => navigator.clipboard.writeText(answer.bullets.join('\n'))}
-                            className="text-[9px] hover:text-white transition-colors"
-                          >
-                            Copy
-                          </button>
-                        )}
-                      </div>
-
-                      {isProcessing && !answer && (
-                        <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                          <div className="text-sm font-medium text-white/50 leading-snug border-l-2 border-cyan-500/30 pl-3 italic">
-                            "{transcript.slice(-100)}..."
-                          </div>
-                          <div className="flex items-center gap-3 text-xs text-cyan-400/70 mt-2">
-                            <div className="h-3.5 w-3.5 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin"></div>
-                            Aura is analyzing...
+                          <div className="flex items-center gap-2.5 text-slate-500 pl-6">
+                            <Loader2 size={16} className="animate-spin" />
+                            <span className="text-[13px] font-medium italic">Loading...</span>
                           </div>
                         </div>
                       )}
 
                       {history.length > 0 ? (
-                        <div className="flex flex-col gap-8">
+                        <div className="flex flex-col gap-10">
                           {history.map((item, index) => (
                             <div key={item.id} className={cn(
-                              "flex flex-col gap-3 transition-all duration-500 relative",
-                              index === 0 ? "opacity-100 scale-100" : "opacity-40 scale-[0.97] hover:opacity-100 hover:scale-100"
+                              "flex flex-col gap-4 transition-all duration-500 relative pb-4",
+                              index === 0 ? "opacity-100" : "opacity-30 hover:opacity-100 grayscale-[0.5] hover:grayscale-0"
                             )}>
-                              {index === 0 && (
-                                <div className="absolute -left-5 top-0 bottom-0 w-1 bg-cyan-500 rounded-full shadow-[0_0_10px_rgba(34,211,238,0.5)]" />
-                              )}
+                              {/* Question Section */}
+                              <div className="flex items-start gap-2.5">
+                                 <MessageSquare size={16} className="text-white mt-1 shrink-0" />
+                                 <div className="text-[15px] font-extrabold text-white leading-snug tracking-tight">
+                                    Question: {item.question}
+                                 </div>
+                              </div>
 
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="text-[10px] font-bold text-cyan-500/50 uppercase tracking-widest">
-                                  {index === 0 ? "Active Response" : `Previous (${new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`}
+                              {/* Answer Section */}
+                              <div className="flex flex-col gap-3">
+                                 <div className="flex items-center gap-2">
+                                    <Star size={16} className="text-amber-400 fill-amber-400" />
+                                    <span className="text-[14px] font-bold text-white">Answer:</span>
+                                 </div>
+                                 <div className="flex flex-col gap-2.5 pl-6">
+                                    {item.answer.map((bullet, i) => (
+                                      <div key={i} className="flex items-start gap-3">
+                                        <div className="w-1.5 h-1.5 rounded-full mt-2.5 shrink-0 bg-white" />
+                                        <span className="text-[14px] leading-relaxed font-medium text-slate-200">
+                                          {bullet}
+                                        </span>
+                                      </div>
+                                    ))}
+                                 </div>
+                              </div>
+                              
+                              {/* Inline loading state for manual trigger */}
+                              {index === 0 && isProcessing && (
+                                <div className="flex items-center gap-2.5 text-slate-500 pl-6 mt-2">
+                                  <Loader2 size={14} className="animate-spin" />
+                                  <span className="text-[12px] font-medium italic">Loading...</span>
                                 </div>
-                              </div>
-
-                              <div className={cn(
-                                "text-sm font-semibold leading-snug pl-1",
-                                index === 0 ? "text-white" : "text-slate-400"
-                              )}>
-                                {item.question}
-                              </div>
-
-                              <div className="flex flex-col gap-2">
-                                {item.answer.map((bullet, i) => (
-                                  <div key={i} className={cn(
-                                    "flex items-start gap-3 rounded-xl p-3 transition-all border",
-                                    index === 0
-                                      ? "bg-cyan-500/5 border-cyan-500/20 shadow-[0_0_20px_rgba(34,211,238,0.05)]"
-                                      : "bg-white/[0.02] border-white/[0.05]"
-                                  )}>
-                                    <div className={cn(
-                                      "w-1.5 h-1.5 rounded-full mt-1.5 shrink-0",
-                                      index === 0 ? "bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.6)]" : "bg-slate-600"
-                                    )} />
-                                    <span className={cn(
-                                      "text-sm leading-relaxed",
-                                      index === 0 ? "text-slate-100" : "text-slate-400"
-                                    )}>{bullet}</span>
-                                  </div>
-                                ))}
-                              </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -1069,9 +1093,10 @@ export default function OverlayWidget() {
       )}
 
       {!isHidden && (
-        <div className="absolute bottom-3 right-3 pointer-events-none text-slate-500 opacity-30 group-hover:opacity-100 transition-opacity">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 0L0 12H12V0Z" fill="currentColor" />
+        <div className="absolute bottom-1 right-1 pointer-events-none text-slate-500 opacity-20 group-hover:opacity-100 transition-opacity">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg" className="rotate-0 shadow-lg">
+            <path d="M12 0L12 12L0 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <path d="M12 6L12 12L6 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity="0.5" />
           </svg>
         </div>
       )}
