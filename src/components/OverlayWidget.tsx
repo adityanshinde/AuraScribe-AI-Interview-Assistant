@@ -345,11 +345,12 @@ export default function OverlayWidget() {
   return (
     <div
       className={cn(
-        "flex flex-col font-sans relative group transition-all duration-500 ease-in-out resize-border pointer-events-none",
+        "flex flex-col font-sans relative group transition-all duration-500 ease-in-out pointer-events-none",
         isHidden ? "h-14 w-14" : "h-full w-full",
-        !isHidden && "pointer-events-auto"
+        !isHidden && "pointer-events-auto",
+        !("electron" in window) && "bg-[#050810]" // Fill background on web
       )}
-      style={{ opacity: opacity / 100, webkitAppRegion: !isHidden ? 'no-drag' : 'none' } as any}
+      style={{ opacity: opacity / 100, webkitAppRegion: !isHidden ? 'no-drag' : 'none', padding: ("electron" in window) ? '4px' : '0' } as any}
     >
       {/* Global Toast Alert */}
       {appAlert && (

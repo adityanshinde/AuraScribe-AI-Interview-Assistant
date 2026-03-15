@@ -108,15 +108,15 @@ function createWindow() {
     const serverModule = require(path.join(__dirname, '../server.cjs'));
     if (serverModule && serverModule.startServer) {
       serverModule.startServer().then((port) => {
-        win.loadURL(`http://localhost:${port}`);
+        win.loadURL(`http://localhost:${port}/app`);
       }).catch(err => {
         console.error("Failed to start embedded Node server:", err);
       });
     } else {
-      win.loadURL('http://localhost:3000');
+      win.loadURL('http://localhost:3000/app');
     }
   } else {
-    win.loadURL('http://localhost:3000');
+    win.loadURL('http://localhost:3000/app');
   }
 
   // ============================================================

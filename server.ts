@@ -421,6 +421,7 @@ FINAL RULE: Return ONLY the JSON object. No markdown. No explanations outside JS
           ],
           model: chatModel,
           temperature: 0.4, // Lower = more accurate, less hallucination
+          response_format: { type: "json_object" },
         };
 
         if (supportsLogprobs(chatModel)) {
